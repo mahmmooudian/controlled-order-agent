@@ -33,17 +33,27 @@ def lookup_order(
     """
     READ-only order lookup tool.
 
-    Flow:
+    Security flow:
     1. Validate tool input.
     2. Execute an OrderService.
     3. Treat returned data as untrusted.
-    4. Allowlist and validate output.
-    5. Return validated structured data.
+    4. Allowlist and validate output fields.
+    5. Verify returned order_id matches requested order_id.
+    6. Report discarded untrusted fields.
+    7. Return validated structured output.
     """
+
+    # --------------------------------------------------------
+    # STEP 1: Validate input
+    # --------------------------------------------------------
 
     validated_input: LookupOrderInput = (
         validate_lookup_input(order_id)
     )
+
+    # --------------------------------------------------------
+    # STEP 2: Select service
+    # --------------------------------------------------------
 
     selected_service = service
 
@@ -52,6 +62,10 @@ def lookup_order(
             simulate_timeout=simulate_timeout,
             simulate_injection=simulate_injection,
         )
+
+    # --------------------------------------------------------
+    # STEP 3: Call service
+    # --------------------------------------------------------
 
     try:
         raw_output = selected_service.get_order(
@@ -63,10 +77,12 @@ def lookup_order(
             str(exc)
         ) from exc
 
-    validation_result = (
-        safe_validate_lookup_output(
-            raw_output
-        )
+    # --------------------------------------------------------
+    # STEP 4: Validate untrusted output
+    # --------------------------------------------------------
+
+    validation_result = safe_validate_lookup_output(
+        raw_output
     )
 
     if not validation_result["success"]:
@@ -74,6 +90,28 @@ def lookup_order(
             "Invalid output returned by lookup_order: "
             + str(validation_result["error"])
         )
+
+    validated_output: LookupOrderOutput = (
+        validation_result["data"]
+    )
+
+    # --------------------------------------------------------
+    # STEP 5: Integrity check
+    # --------------------------------------------------------
+
+    if (
+        validated_output.order_id
+        != validated_input.order_id
+    ):
+        raise LookupOrderToolError(
+            "Order integrity check failed: "
+            f"requested order_id={validated_input.order_id}, "
+            f"returned order_id={validated_output.order_id}"
+        )
+
+    # --------------------------------------------------------
+    # STEP 6: Security visibility
+    # --------------------------------------------------------
 
     discarded_fields = (
         validation_result["discarded_fields"]
@@ -85,7 +123,11 @@ def lookup_order(
             discarded_fields,
         )
 
-    return validation_result["data"]
+    # --------------------------------------------------------
+    # STEP 7: Return safe structured result
+    # --------------------------------------------------------
+
+    return validated_output
 
 
 MAX_RETRIES = 1
@@ -117,6 +159,8 @@ def lookup_order_with_retry(
                 f"[TOOL] lookup_order attempt {attempts}"
             )
 
+            # Preserve the original demo behaviour:
+            # the built-in mock only times out on the first attempt.
             if service is None:
                 return lookup_order(
                     order_id,
