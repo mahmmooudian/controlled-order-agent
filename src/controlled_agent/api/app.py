@@ -3,7 +3,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from controlled_agent import __version__
-from controlled_agent.api.routes import health_router
+from controlled_agent.api.routes import (
+    agent_router,
+    health_router,
+)
 
 
 def create_app() -> FastAPI:
@@ -23,6 +26,10 @@ def create_app() -> FastAPI:
 
     application.include_router(
         health_router
+    )
+
+    application.include_router(
+        agent_router
     )
 
     return application
