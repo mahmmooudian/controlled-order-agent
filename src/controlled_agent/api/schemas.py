@@ -19,6 +19,13 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+class ReadinessResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    ready: bool
+    service: str
 
 
 # ============================================================
