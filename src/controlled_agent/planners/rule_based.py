@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.policy import can_offer_ticket
+from controlled_agent.policy import can_offer_ticket
 
 from controlled_agent.domain.schemas import (
     AgentAction,
