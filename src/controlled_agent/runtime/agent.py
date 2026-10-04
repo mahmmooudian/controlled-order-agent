@@ -1,13 +1,5 @@
 ﻿from __future__ import annotations
 
-from controlled_agent.observability.audit import AuditLogger
-from controlled_agent.planners import BasePlanner
-from controlled_agent.policy import (
-    MAX_STEPS,
-    PolicyDecision,
-    can_continue_execution,
-    evaluate_tool_policy,
-)
 from controlled_agent.domain.schemas import AgentAction
 from controlled_agent.domain.state import (
     AgentState,
@@ -20,11 +12,20 @@ from controlled_agent.domain.state import (
     set_status,
     update_user_input,
 )
-from controlled_agent.tools.ticket import create_ticket
+from controlled_agent.observability.audit import AuditLogger
+from controlled_agent.planners.base import BasePlanner
+from controlled_agent.policy.engine import (
+    MAX_STEPS,
+    PolicyDecision,
+    can_continue_execution,
+    evaluate_tool_policy,
+)
+from controlled_agent.services.ticket import TicketService
 from controlled_agent.tools.order import (
     LookupOrderTimeoutError,
     lookup_order_with_retry,
 )
+from controlled_agent.tools.ticket import create_ticket
 
 
 class ControlledOrderAgent:
@@ -41,18 +42,46 @@ class ControlledOrderAgent:
     - Enforce MAX_STEPS
     - Record operational Audit events
     - Support controlled security simulations
+    - Support dependency injection for production services
     """
 
     def __init__(
         self,
         planner: BasePlanner,
         *,
+        audit_logger: AuditLogger | None = None,
+        ticket_service: TicketService | None = None,
         simulate_lookup_injection: bool = False,
         simulate_lookup_timeout: bool = False,
     ) -> None:
+        """
+        Initialize the controlled Agent runtime.
+
+        Optional dependencies can be injected for
+        production, persistence, integration testing,
+        or alternative implementations.
+
+        Backward compatibility is preserved:
+
+        - If audit_logger is not provided,
+          the default in-memory AuditLogger is used.
+
+        - If ticket_service is not provided,
+          create_ticket falls back to MockTicketService.
+
+        - Existing security simulation flags
+          continue to work as before.
+        """
 
         self.planner = planner
-        self.audit = AuditLogger()
+
+        self.audit = (
+            audit_logger
+            if audit_logger is not None
+            else AuditLogger()
+        )
+
+        self.ticket_service = ticket_service
 
         self.simulate_lookup_injection = (
             simulate_lookup_injection
@@ -162,7 +191,6 @@ class ControlledOrderAgent:
             state.status
             != AgentStatus.WAITING_FOR_APPROVAL
         ):
-
             self.audit.log(
                 step=state.steps,
                 event="approval_error",
@@ -217,7 +245,6 @@ class ControlledOrderAgent:
             if not can_continue_execution(
                 state.steps
             ):
-
                 self.audit.log(
                     step=state.steps,
                     event="max_steps_reached",
@@ -246,13 +273,11 @@ class ControlledOrderAgent:
             )
 
             try:
-
                 decision = self.planner.decide(
                     state
                 )
 
             except Exception as exc:
-
                 self.audit.log(
                     step=state.steps,
                     event="planner_failed",
@@ -285,7 +310,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.ASK_ORDER_ID
             ):
-
                 message = (
                     decision.message
                     or (
@@ -316,7 +340,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.LOOKUP_ORDER
             ):
-
                 set_status(
                     state,
                     AgentStatus.LOOKING_UP_ORDER,
@@ -345,7 +368,6 @@ class ControlledOrderAgent:
                     policy_result
                     != PolicyDecision.ALLOW
                 ):
-
                     self.audit.log(
                         step=state.steps,
                         event="policy_block",
@@ -372,7 +394,6 @@ class ControlledOrderAgent:
                 )
 
                 if order_id is None:
-
                     self.audit.log(
                         step=state.steps,
                         event="validation_failed",
@@ -397,7 +418,6 @@ class ControlledOrderAgent:
                 # --------------------------------------------
 
                 try:
-
                     result = (
                         lookup_order_with_retry(
                             order_id,
@@ -411,7 +431,6 @@ class ControlledOrderAgent:
                     )
 
                 except LookupOrderTimeoutError:
-
                     self.audit.log(
                         step=state.steps,
                         event="tool_timeout",
@@ -430,7 +449,6 @@ class ControlledOrderAgent:
                     )
 
                 except Exception as exc:
-
                     self.audit.log(
                         step=state.steps,
                         event="tool_failed",
@@ -490,7 +508,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.REQUEST_APPROVAL
             ):
-
                 policy_result = (
                     evaluate_tool_policy(
                         tool_name="create_ticket",
@@ -520,7 +537,6 @@ class ControlledOrderAgent:
                     policy_result
                     == PolicyDecision.DENY
                 ):
-
                     self.audit.log(
                         step=state.steps,
                         event="policy_block",
@@ -546,7 +562,6 @@ class ControlledOrderAgent:
                     policy_result
                     == PolicyDecision.REQUIRE_APPROVAL
                 ):
-
                     state.awaiting_approval = True
 
                     set_status(
@@ -584,7 +599,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.CREATE_TICKET
             ):
-
                 # --------------------------------------------
                 # INDEPENDENT POLICY GATE
                 # --------------------------------------------
@@ -614,7 +628,6 @@ class ControlledOrderAgent:
                     policy_result
                     != PolicyDecision.ALLOW
                 ):
-
                     self.audit.log(
                         step=state.steps,
                         event="write_blocked",
@@ -637,7 +650,6 @@ class ControlledOrderAgent:
                 # --------------------------------------------
 
                 if state.order_id is None:
-
                     self.audit.log(
                         step=state.steps,
                         event="validation_failed",
@@ -650,7 +662,6 @@ class ControlledOrderAgent:
                     )
 
                 if state.days_delayed is None:
-
                     self.audit.log(
                         step=state.steps,
                         event="validation_failed",
@@ -696,17 +707,16 @@ class ControlledOrderAgent:
                 )
 
                 try:
-
                     ticket = create_ticket(
                         order_id=state.order_id,
                         reason=reason,
                         idempotency_key=(
                             idempotency_key
                         ),
+                        service=self.ticket_service,
                     )
 
                 except Exception as exc:
-
                     self.audit.log(
                         step=state.steps,
                         event="write_tool_failed",
@@ -740,9 +750,9 @@ class ControlledOrderAgent:
                 # --------------------------------------------
 
                 final_message = (
-                    f"ØªÛŒÚ©Øª Ù¾Ø´ØªÛŒØ¨Ø§Ù†ÛŒ Ø¨Ø§ Ø´Ù†Ø§Ø³Ù‡ "
+                    "تیکت پشتیبانی با شناسه "
                     f"{ticket.ticket_id} "
-                    "Ø¨Ø§ Ù…ÙˆÙÙ‚ÛŒØª Ø«Ø¨Øª Ø´Ø¯Ù‡ Ø§Ø³Øª."
+                    "با موفقیت ثبت شده است."
                 )
 
                 self.audit.log(
@@ -764,7 +774,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.RESPOND
             ):
-
                 message = (
                     decision.message
                     or "Request completed."
@@ -789,7 +798,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.ESCALATE
             ):
-
                 message = (
                     decision.message
                     or (
@@ -817,7 +825,6 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.STOP
             ):
-
                 message = (
                     decision.message
                     or "Agent stopped."
