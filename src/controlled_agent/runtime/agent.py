@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from app.observability.audit import AuditLogger
+from controlled_agent.observability.audit import AuditLogger
 from controlled_agent.planners import BasePlanner
 from controlled_agent.policy import (
     MAX_STEPS,
@@ -740,9 +740,9 @@ class ControlledOrderAgent:
                 # --------------------------------------------
 
                 final_message = (
-                    f"تیکت پشتیبانی با شناسه "
+                    f"ØªÛŒÚ©Øª Ù¾Ø´ØªÛŒØ¨Ø§Ù†ÛŒ Ø¨Ø§ Ø´Ù†Ø§Ø³Ù‡ "
                     f"{ticket.ticket_id} "
-                    "با موفقیت ثبت شده است."
+                    "Ø¨Ø§ Ù…ÙˆÙÙ‚ÛŒØª Ø«Ø¨Øª Ø´Ø¯Ù‡ Ø§Ø³Øª."
                 )
 
                 self.audit.log(
