@@ -35,10 +35,28 @@ class AuditLogger:
 
     It stores operational events only.
     It does NOT store hidden chain-of-thought.
+
+    set_run_id() is intentionally a no-op here.
+    Persistent logger implementations may override it
+    to bind events to a specific Agent run.
     """
 
     def __init__(self) -> None:
         self.events: list[AuditEvent] = []
+
+    def set_run_id(
+        self,
+        run_id: str | None,
+    ) -> None:
+        """
+        Bind the logger to an Agent run.
+
+        The default in-memory AuditLogger does not
+        need a run identifier, so this implementation
+        intentionally does nothing.
+        """
+
+        return None
 
     def log(
         self,

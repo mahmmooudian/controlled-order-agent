@@ -6,19 +6,20 @@ from controlled_agent.persistence import AuditRepository
 
 class PersistentAuditLogger(AuditLogger):
     """
-    Audit logger that preserves the existing in-memory API
-    while also persisting every event to SQLite.
+    Audit logger that keeps the normal in-memory
+    AuditLogger API while optionally persisting
+    events to SQLite.
 
-    Important:
-    clear() only clears the in-memory buffer.
-    Historical database records are never deleted implicitly.
+    The logger may be created before an Agent run
+    exists. Once a run_id is assigned by the Runtime,
+    subsequent events are persisted under that run.
     """
 
     def __init__(
         self,
         repository: AuditRepository,
         *,
-        run_id: str,
+        run_id: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -33,7 +34,10 @@ class PersistentAuditLogger(AuditLogger):
         detail: str,
     ) -> None:
         """
-        Record the event in memory and persist it.
+        Always keep the event in memory.
+
+        Persist it only when the logger is currently
+        bound to a valid Agent run.
         """
 
         super().log(
@@ -41,6 +45,9 @@ class PersistentAuditLogger(AuditLogger):
             event=event,
             detail=detail,
         )
+
+        if self.run_id is None:
+            return
 
         audit_event = self.events[-1]
 
@@ -51,10 +58,11 @@ class PersistentAuditLogger(AuditLogger):
 
     def set_run_id(
         self,
-        run_id: str,
+        run_id: str | None,
     ) -> None:
         """
-        Bind future events to another Agent run.
+        Bind or unbind future audit events
+        from an Agent run.
         """
 
         self.run_id = run_id
@@ -66,8 +74,14 @@ class PersistentAuditLogger(AuditLogger):
         Explicitly remove persisted events for
         the currently bound run.
 
-        This is intentionally separate from clear().
+        Normal clear() still clears only memory.
         """
+
+        if self.run_id is None:
+            raise RuntimeError(
+                "PersistentAuditLogger is not "
+                "bound to an Agent run."
+            )
 
         self.repository.clear_for_run(
             self.run_id

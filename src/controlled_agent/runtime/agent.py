@@ -44,8 +44,9 @@ class ControlledOrderAgent:
     - Record operational Audit events
     - Support controlled security simulations
     - Support dependency injection
-    - Persist Agent runs when a repository is configured
+    - Persist Agent runs when configured
     - Restore persisted Agent runs
+    - Bind Audit events to persistent run IDs
     """
 
     def __init__(
@@ -114,8 +115,9 @@ class ControlledOrderAgent:
         Persist the current Agent state when
         AgentRunRepository is configured.
 
-        If this is a new run, a new run_id is generated.
-        Existing runs are updated using the same run_id.
+        When a run id becomes available, the
+        AuditLogger is automatically bound
+        to the same Agent run.
         """
 
         if self.run_repository is None:
@@ -128,6 +130,10 @@ class ControlledOrderAgent:
             )
         )
 
+        self.audit.set_run_id(
+            self.current_run_id
+        )
+
     def load_run(
         self,
         run_id: str,
@@ -135,9 +141,8 @@ class ControlledOrderAgent:
         """
         Restore a previously persisted Agent run.
 
-        When successfully loaded, the supplied run_id
-        becomes the active run identifier. Future resume
-        operations update the same database record.
+        The restored run becomes the active run
+        for both state persistence and audit logging.
         """
 
         if self.run_repository is None:
@@ -151,6 +156,10 @@ class ControlledOrderAgent:
 
         if state is not None:
             self.current_run_id = run_id
+
+            self.audit.set_run_id(
+                run_id
+            )
 
         return state
 
@@ -166,19 +175,23 @@ class ControlledOrderAgent:
         Start a new Agent execution.
         """
 
-        self.audit.clear()
-
-        # A new conversation must receive
-        # a new persistent run identifier.
+        # Detach from any previous persistent run.
         self.current_run_id = None
+
+        self.audit.set_run_id(
+            None
+        )
+
+        self.audit.clear()
 
         state = AgentState(
             user_message=user_message,
             latest_user_message=user_message,
         )
 
-        # Store initial state.
-        # If persistence is disabled this is a no-op.
+        # Create the persistent Agent run first.
+        # This also binds the AuditLogger to the
+        # generated run_id.
         self._persist_state(
             state
         )
@@ -193,8 +206,6 @@ class ControlledOrderAgent:
             state
         )
 
-        # Persist the resulting state, including
-        # waiting / completed / failed status.
         self._persist_state(
             result
         )
