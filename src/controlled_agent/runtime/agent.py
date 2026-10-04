@@ -13,6 +13,7 @@ from controlled_agent.domain.state import (
     update_user_input,
 )
 from controlled_agent.observability.audit import AuditLogger
+from controlled_agent.persistence import AgentRunRepository
 from controlled_agent.planners.base import BasePlanner
 from controlled_agent.policy.engine import (
     MAX_STEPS,
@@ -42,7 +43,9 @@ class ControlledOrderAgent:
     - Enforce MAX_STEPS
     - Record operational Audit events
     - Support controlled security simulations
-    - Support dependency injection for production services
+    - Support dependency injection
+    - Persist Agent runs when a repository is configured
+    - Restore persisted Agent runs
     """
 
     def __init__(
@@ -51,6 +54,7 @@ class ControlledOrderAgent:
         *,
         audit_logger: AuditLogger | None = None,
         ticket_service: TicketService | None = None,
+        run_repository: AgentRunRepository | None = None,
         simulate_lookup_injection: bool = False,
         simulate_lookup_timeout: bool = False,
     ) -> None:
@@ -69,6 +73,9 @@ class ControlledOrderAgent:
         - If ticket_service is not provided,
           create_ticket falls back to MockTicketService.
 
+        - If run_repository is not provided,
+          Agent state persistence is disabled.
+
         - Existing security simulation flags
           continue to work as before.
         """
@@ -83,6 +90,10 @@ class ControlledOrderAgent:
 
         self.ticket_service = ticket_service
 
+        self.run_repository = run_repository
+
+        self.current_run_id: str | None = None
+
         self.simulate_lookup_injection = (
             simulate_lookup_injection
         )
@@ -90,6 +101,58 @@ class ControlledOrderAgent:
         self.simulate_lookup_timeout = (
             simulate_lookup_timeout
         )
+
+    # ========================================================
+    # PERSISTENCE
+    # ========================================================
+
+    def _persist_state(
+        self,
+        state: AgentState,
+    ) -> None:
+        """
+        Persist the current Agent state when
+        AgentRunRepository is configured.
+
+        If this is a new run, a new run_id is generated.
+        Existing runs are updated using the same run_id.
+        """
+
+        if self.run_repository is None:
+            return
+
+        self.current_run_id = (
+            self.run_repository.save(
+                state,
+                run_id=self.current_run_id,
+            )
+        )
+
+    def load_run(
+        self,
+        run_id: str,
+    ) -> AgentState | None:
+        """
+        Restore a previously persisted Agent run.
+
+        When successfully loaded, the supplied run_id
+        becomes the active run identifier. Future resume
+        operations update the same database record.
+        """
+
+        if self.run_repository is None:
+            raise RuntimeError(
+                "AgentRunRepository is not configured."
+            )
+
+        state = self.run_repository.get(
+            run_id
+        )
+
+        if state is not None:
+            self.current_run_id = run_id
+
+        return state
 
     # ========================================================
     # START NEW CONVERSATION
@@ -105,9 +168,19 @@ class ControlledOrderAgent:
 
         self.audit.clear()
 
+        # A new conversation must receive
+        # a new persistent run identifier.
+        self.current_run_id = None
+
         state = AgentState(
             user_message=user_message,
             latest_user_message=user_message,
+        )
+
+        # Store initial state.
+        # If persistence is disabled this is a no-op.
+        self._persist_state(
+            state
         )
 
         self.audit.log(
@@ -116,7 +189,17 @@ class ControlledOrderAgent:
             detail="New user request received.",
         )
 
-        return self._execute(state)
+        result = self._execute(
+            state
+        )
+
+        # Persist the resulting state, including
+        # waiting / completed / failed status.
+        self._persist_state(
+            result
+        )
+
+        return result
 
     # ========================================================
     # RESUME WITH NEW USER INPUT
@@ -152,13 +235,19 @@ class ControlledOrderAgent:
                 ),
             )
 
-            return mark_failed(
+            result = mark_failed(
                 state,
                 (
                     "Agent is not currently "
                     "waiting for user input."
                 ),
             )
+
+            self._persist_state(
+                result
+            )
+
+            return result
 
         update_user_input(
             state,
@@ -171,7 +260,15 @@ class ControlledOrderAgent:
             detail="Additional user input received.",
         )
 
-        return self._execute(state)
+        result = self._execute(
+            state
+        )
+
+        self._persist_state(
+            result
+        )
+
+        return result
 
     # ========================================================
     # RESUME AFTER HUMAN APPROVAL
@@ -200,13 +297,19 @@ class ControlledOrderAgent:
                 ),
             )
 
-            return mark_failed(
+            result = mark_failed(
                 state,
                 (
                     "Agent is not waiting "
                     "for approval."
                 ),
             )
+
+            self._persist_state(
+                result
+            )
+
+            return result
 
         state.awaiting_approval = False
         state.human_approved = approved
@@ -225,7 +328,15 @@ class ControlledOrderAgent:
             AgentStatus.DECIDING,
         )
 
-        return self._execute(state)
+        result = self._execute(
+            state
+        )
+
+        self._persist_state(
+            result
+        )
+
+        return result
 
     # ========================================================
     # MAIN EXECUTION LOOP
@@ -292,7 +403,9 @@ class ControlledOrderAgent:
                     ),
                 )
 
-            increment_step(state)
+            increment_step(
+                state
+            )
 
             self.audit.log(
                 step=state.steps,
