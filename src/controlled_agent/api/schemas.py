@@ -7,6 +7,10 @@ from pydantic import (
 )
 
 
+# ============================================================
+# HEALTH
+# ============================================================
+
 class HealthResponse(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -16,6 +20,10 @@ class HealthResponse(BaseModel):
     service: str
     version: str
 
+
+# ============================================================
+# CREATE RUN
+# ============================================================
 
 class CreateAgentRunRequest(BaseModel):
     model_config = ConfigDict(
@@ -27,6 +35,37 @@ class CreateAgentRunRequest(BaseModel):
         max_length=4000,
     )
 
+
+# ============================================================
+# CONTINUE RUN WITH USER INPUT
+# ============================================================
+
+class AgentInputRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    message: str = Field(
+        min_length=1,
+        max_length=4000,
+    )
+
+
+# ============================================================
+# HUMAN APPROVAL
+# ============================================================
+
+class AgentApprovalRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    approved: bool
+
+
+# ============================================================
+# PUBLIC RUN RESPONSE
+# ============================================================
 
 class AgentRunResponse(BaseModel):
     model_config = ConfigDict(

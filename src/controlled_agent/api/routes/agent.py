@@ -11,11 +11,18 @@ from controlled_agent.api.dependencies import (
     get_agent,
 )
 from controlled_agent.api.schemas import (
+    AgentApprovalRequest,
+    AgentInputRequest,
     AgentRunResponse,
     CreateAgentRunRequest,
 )
-from controlled_agent.domain.state import AgentState
-from controlled_agent.runtime import ControlledOrderAgent
+from controlled_agent.domain.state import (
+    AgentState,
+    AgentStatus,
+)
+from controlled_agent.runtime import (
+    ControlledOrderAgent,
+)
 
 
 router = APIRouter(
@@ -23,6 +30,10 @@ router = APIRouter(
     tags=["agent"],
 )
 
+
+# ============================================================
+# RESPONSE MAPPING
+# ============================================================
 
 def _state_to_response(
     *,
@@ -60,6 +71,36 @@ def _state_to_response(
     )
 
 
+# ============================================================
+# LOAD RUN
+# ============================================================
+
+def _load_run_or_404(
+    *,
+    agent: ControlledOrderAgent,
+    run_id: str,
+) -> AgentState:
+    """
+    Restore an Agent run or return HTTP 404.
+    """
+
+    state = agent.load_run(
+        run_id
+    )
+
+    if state is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agent run not found.",
+        )
+
+    return state
+
+
+# ============================================================
+# CREATE RUN
+# ============================================================
+
 @router.post(
     "/runs",
     response_model=AgentRunResponse,
@@ -83,7 +124,9 @@ def create_agent_run(
 
     if run_id is None:
         raise HTTPException(
-            status_code=500,
+            status_code=(
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
             detail=(
                 "Agent run was created without "
                 "a persistent run_id."
@@ -93,4 +136,136 @@ def create_agent_run(
     return _state_to_response(
         run_id=run_id,
         state=state,
+    )
+
+
+# ============================================================
+# GET RUN
+# ============================================================
+
+@router.get(
+    "/runs/{run_id}",
+    response_model=AgentRunResponse,
+)
+def get_agent_run(
+    run_id: str,
+    agent: ControlledOrderAgent = Depends(
+        get_agent
+    ),
+) -> AgentRunResponse:
+    """
+    Return the current persisted state
+    of an Agent run.
+    """
+
+    state = _load_run_or_404(
+        agent=agent,
+        run_id=run_id,
+    )
+
+    return _state_to_response(
+        run_id=run_id,
+        state=state,
+    )
+
+
+# ============================================================
+# CONTINUE WITH USER INPUT
+# ============================================================
+
+@router.post(
+    "/runs/{run_id}/input",
+    response_model=AgentRunResponse,
+)
+def continue_agent_run(
+    run_id: str,
+    request: AgentInputRequest,
+    agent: ControlledOrderAgent = Depends(
+        get_agent
+    ),
+) -> AgentRunResponse:
+    """
+    Continue an Agent run that is waiting
+    for additional user input.
+    """
+
+    state = _load_run_or_404(
+        agent=agent,
+        run_id=run_id,
+    )
+
+    if (
+        state.status
+        != AgentStatus.WAITING_FOR_INPUT
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Agent run is not waiting "
+                "for user input. "
+                f"Current status: "
+                f"{state.status.value}"
+            ),
+        )
+
+    result = agent.resume_with_user_input(
+        state,
+        request.message,
+    )
+
+    return _state_to_response(
+        run_id=run_id,
+        state=result,
+    )
+
+
+# ============================================================
+# HUMAN APPROVAL
+# ============================================================
+
+@router.post(
+    "/runs/{run_id}/approval",
+    response_model=AgentRunResponse,
+)
+def decide_agent_approval(
+    run_id: str,
+    request: AgentApprovalRequest,
+    agent: ControlledOrderAgent = Depends(
+        get_agent
+    ),
+) -> AgentRunResponse:
+    """
+    Approve or deny a sensitive WRITE action.
+
+    The Runtime performs the actual persistent
+    approval validation before allowing execution.
+    """
+
+    state = _load_run_or_404(
+        agent=agent,
+        run_id=run_id,
+    )
+
+    if (
+        state.status
+        != AgentStatus.WAITING_FOR_APPROVAL
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Agent run is not waiting "
+                "for human approval. "
+                f"Current status: "
+                f"{state.status.value}"
+            ),
+        )
+
+    result = agent.resume_with_approval(
+        state,
+        approved=request.approved,
+    )
+
+    return _state_to_response(
+        run_id=run_id,
+        state=result,
     )
