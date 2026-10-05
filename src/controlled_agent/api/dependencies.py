@@ -41,11 +41,12 @@ def get_database_path() -> Path:
     return DEFAULT_DATABASE_PATH
 
 
-def build_agent(
+def build_database(
     database_path: Path | str | None = None,
-) -> ControlledOrderAgent:
+) -> Database:
     """
-    Build one fully wired production Agent runtime.
+    Create and initialize one SQLite database
+    connection provider.
     """
 
     db_path = (
@@ -64,6 +65,37 @@ def build_agent(
     )
 
     database.initialize()
+
+    return database
+
+
+def build_audit_repository(
+    database_path: Path | str | None = None,
+) -> AuditRepository:
+    """
+    Build an AuditRepository backed by the
+    configured SQLite database.
+    """
+
+    database = build_database(
+        database_path
+    )
+
+    return AuditRepository(
+        database
+    )
+
+
+def build_agent(
+    database_path: Path | str | None = None,
+) -> ControlledOrderAgent:
+    """
+    Build one fully wired production Agent runtime.
+    """
+
+    database = build_database(
+        database_path
+    )
 
     run_repository = AgentRunRepository(
         database
@@ -100,7 +132,16 @@ def build_agent(
 
 def get_agent() -> ControlledOrderAgent:
     """
-    FastAPI dependency provider.
+    FastAPI dependency provider for Agent runtimes.
     """
 
     return build_agent()
+
+
+def get_audit_repository() -> AuditRepository:
+    """
+    FastAPI dependency provider for persisted
+    execution traces.
+    """
+
+    return build_audit_repository()

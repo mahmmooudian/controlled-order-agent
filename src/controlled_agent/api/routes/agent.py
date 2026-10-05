@@ -9,16 +9,21 @@ from fastapi import (
 
 from controlled_agent.api.dependencies import (
     get_agent,
+    get_audit_repository,
 )
 from controlled_agent.api.schemas import (
     AgentApprovalRequest,
     AgentInputRequest,
     AgentRunResponse,
+    AuditEventResponse,
     CreateAgentRunRequest,
 )
 from controlled_agent.domain.state import (
     AgentState,
     AgentStatus,
+)
+from controlled_agent.persistence import (
+    AuditRepository,
 )
 from controlled_agent.runtime import (
     ControlledOrderAgent,
@@ -81,7 +86,10 @@ def _load_run_or_404(
     run_id: str,
 ) -> AgentState:
     """
-    Restore an Agent run or return HTTP 404.
+    Restore a persisted Agent run.
+
+    HTTP 404 is returned when the requested
+    run does not exist.
     """
 
     state = agent.load_run(
@@ -90,7 +98,9 @@ def _load_run_or_404(
 
     if state is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
             detail="Agent run not found.",
         )
 
@@ -113,7 +123,8 @@ def create_agent_run(
     ),
 ) -> AgentRunResponse:
     """
-    Create and execute a new controlled Agent run.
+    Create and execute a new controlled
+    Agent run.
     """
 
     state = agent.run(
@@ -155,7 +166,7 @@ def get_agent_run(
 ) -> AgentRunResponse:
     """
     Return the current persisted state
-    of an Agent run.
+    of one Agent run.
     """
 
     state = _load_run_or_404(
@@ -199,7 +210,9 @@ def continue_agent_run(
         != AgentStatus.WAITING_FOR_INPUT
     ):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
                 "Agent run is not waiting "
                 "for user input. "
@@ -208,9 +221,11 @@ def continue_agent_run(
             ),
         )
 
-    result = agent.resume_with_user_input(
-        state,
-        request.message,
+    result = (
+        agent.resume_with_user_input(
+            state,
+            request.message,
+        )
     )
 
     return _state_to_response(
@@ -237,8 +252,8 @@ def decide_agent_approval(
     """
     Approve or deny a sensitive WRITE action.
 
-    The Runtime performs the actual persistent
-    approval validation before allowing execution.
+    The Runtime performs the final persistent
+    approval validation before execution.
     """
 
     state = _load_run_or_404(
@@ -251,7 +266,9 @@ def decide_agent_approval(
         != AgentStatus.WAITING_FOR_APPROVAL
     ):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
                 "Agent run is not waiting "
                 "for human approval. "
@@ -260,12 +277,58 @@ def decide_agent_approval(
             ),
         )
 
-    result = agent.resume_with_approval(
-        state,
-        approved=request.approved,
+    result = (
+        agent.resume_with_approval(
+            state,
+            approved=request.approved,
+        )
     )
 
     return _state_to_response(
         run_id=run_id,
         state=result,
     )
+
+
+# ============================================================
+# AUDIT / EXECUTION TRACE
+# ============================================================
+
+@router.get(
+    "/runs/{run_id}/audit",
+    response_model=list[AuditEventResponse],
+)
+def get_agent_run_audit(
+    run_id: str,
+    agent: ControlledOrderAgent = Depends(
+        get_agent
+    ),
+    audit_repository: AuditRepository = Depends(
+        get_audit_repository
+    ),
+) -> list[AuditEventResponse]:
+    """
+    Return the persisted execution trace
+    for one Agent run.
+    """
+
+    _load_run_or_404(
+        agent=agent,
+        run_id=run_id,
+    )
+
+    events = (
+        audit_repository.get_for_run(
+            run_id
+        )
+    )
+
+    return [
+        AuditEventResponse(
+            timestamp=event.timestamp,
+            step=event.step,
+            event=event.event,
+            detail=event.detail,
+        )
+        for event in events
+    ]

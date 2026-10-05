@@ -85,6 +85,25 @@ def create_transport():
                 json=RUN_RESPONSE,
             )
 
+        if (
+            request.method == "GET"
+            and request.url.path
+            == "/agent/runs/run-123/audit"
+        ):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "timestamp": (
+                            "2026-10-05T00:00:00+00:00"
+                        ),
+                        "step": 1,
+                        "event": "request_received",
+                        "detail": "Request accepted.",
+                    }
+                ],
+            )
+
         return httpx.Response(
             404,
             json={
@@ -150,6 +169,27 @@ def test_api_client_continue_and_approve():
     )
 
     assert approved.run_id == "run-123"
+
+    client.close()
+
+
+def test_api_client_get_audit():
+    client = ControlledAgentApiClient(
+        transport=create_transport()
+    )
+
+    events = client.get_audit(
+        "run-123"
+    )
+
+    assert len(events) == 1
+
+    assert (
+        events[0].event
+        == "request_received"
+    )
+
+    assert events[0].step == 1
 
     client.close()
 

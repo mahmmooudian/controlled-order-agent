@@ -6,7 +6,10 @@ import httpx
 
 from controlled_agent.api.schemas import AgentRunResponse
 
-
+from controlled_agent.api.schemas import (
+    AgentRunResponse,
+    AuditEventResponse,
+)
 class ApiClientError(RuntimeError):
     """
     Raised when the Controlled Agent API cannot
@@ -222,3 +225,24 @@ class ControlledAgentApiClient:
         traceback,
     ) -> None:
         self.close()
+            # ========================================================
+    # AUDIT / EXECUTION TRACE
+    # ========================================================
+
+    def get_audit(
+        self,
+        run_id: str,
+    ) -> list[AuditEventResponse]:
+        response = self._request(
+            "GET",
+            f"/agent/runs/{run_id}/audit",
+        )
+
+        payload = response.json()
+
+        return [
+            AuditEventResponse.model_validate(
+                item
+            )
+            for item in payload
+        ]
