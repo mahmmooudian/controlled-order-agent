@@ -51,10 +51,14 @@ CREATE TABLE IF NOT EXISTS approvals (
 
     action TEXT NOT NULL,
 
+    order_id TEXT,
+    context_hash TEXT,
+
     approved INTEGER,
 
     requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     decided_at TEXT,
+    consumed_at TEXT,
 
     FOREIGN KEY (run_id)
         REFERENCES agent_runs(run_id)

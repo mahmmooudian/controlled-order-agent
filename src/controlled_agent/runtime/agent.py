@@ -1,5 +1,8 @@
 ﻿from __future__ import annotations
 
+import hashlib
+import json
+
 from controlled_agent.domain.schemas import AgentAction
 from controlled_agent.domain.state import (
     AgentState,
@@ -17,8 +20,8 @@ from controlled_agent.persistence import (
     AgentRunRepository,
     ApprovalRepository,
 )
-from controlled_agent.planners.base import BasePlanner
-from controlled_agent.policy.engine import (
+from controlled_agent.planners import BasePlanner
+from controlled_agent.policy import (
     MAX_STEPS,
     PolicyDecision,
     can_continue_execution,
@@ -38,7 +41,7 @@ class ControlledOrderAgent:
 
     Responsibilities:
     - Maintain conversation state
-    - Ask Planner for the next action
+    - Ask Planner for next action
     - Enforce Policy independently from Planner
     - Execute READ / WRITE tools
     - Pause for missing user input
@@ -51,7 +54,13 @@ class ControlledOrderAgent:
     - Restore persisted Agent runs
     - Bind Audit events to persistent run IDs
     - Persist Human Approval requests and decisions
+    - Bind approvals to the exact WRITE context
+    - Prevent approval replay
     """
+
+    # ========================================================
+    # INITIALIZATION
+    # ========================================================
 
     def __init__(
         self,
@@ -83,8 +92,8 @@ class ControlledOrderAgent:
           Agent state persistence is disabled.
 
         - If approval_repository is not provided,
-          Human Approval works as before without
-          persistent approval records.
+          Human Approval works without persistent
+          approval records.
 
         Approval persistence requires run persistence
         because approvals are linked to agent_runs
@@ -109,10 +118,18 @@ class ControlledOrderAgent:
         )
 
         self.ticket_service = ticket_service
-        self.run_repository = run_repository
-        self.approval_repository = approval_repository
 
-        self.current_run_id: str | None = None
+        self.run_repository = (
+            run_repository
+        )
+
+        self.approval_repository = (
+            approval_repository
+        )
+
+        self.current_run_id: str | None = (
+            None
+        )
 
         self.simulate_lookup_injection = (
             simulate_lookup_injection
@@ -166,22 +183,71 @@ class ControlledOrderAgent:
         """
 
         if self.run_repository is None:
-            raise RuntimeError(
-                "AgentRunRepository is not configured."
-            )
+            return None
 
         state = self.run_repository.get(
             run_id
         )
 
-        if state is not None:
-            self.current_run_id = run_id
+        if state is None:
+            return None
 
-            self.audit.set_run_id(
-                run_id
-            )
+        self.current_run_id = run_id
+
+        self.audit.set_run_id(
+            run_id
+        )
 
         return state
+
+    # ========================================================
+    # APPROVAL CONTEXT
+    # ========================================================
+
+    def _build_approval_context_hash(
+        self,
+        state: AgentState,
+        *,
+        action: str,
+    ) -> str:
+        """
+        Create a deterministic SHA-256 fingerprint
+        for the exact WRITE operation being approved.
+
+        A material change to the WRITE context creates
+        a different hash and therefore invalidates an
+        approval created for an earlier context.
+        """
+
+        order_status = None
+
+        if state.order_status is not None:
+            order_status = (
+                state.order_status.value
+            )
+
+        context = {
+            "version": 1,
+            "action": action,
+            "order_id": state.order_id,
+            "order_status": order_status,
+            "days_delayed": (
+                state.days_delayed
+            ),
+        }
+
+        canonical = json.dumps(
+            context,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+
+        return hashlib.sha256(
+            canonical.encode(
+                "utf-8"
+            )
+        ).hexdigest()
 
     # ========================================================
     # APPROVAL PERSISTENCE
@@ -189,34 +255,44 @@ class ControlledOrderAgent:
 
     def _ensure_pending_approval(
         self,
+        state: AgentState,
         *,
         action: str,
     ) -> bool:
         """
         Ensure that exactly one pending approval exists
-        for the active Agent run and action.
+        for the exact current WRITE context.
 
-        Returns True when approval persistence is either
-        disabled or successfully available.
-
-        Returns False when persistence is configured but
-        the approval request cannot safely be created.
+        Security behavior is fail-closed when approval
+        persistence is enabled.
         """
 
         if self.approval_repository is None:
             return True
 
-        if self.current_run_id is None:
+        if (
+            self.current_run_id is None
+            or state.order_id is None
+        ):
             self.audit.log(
-                step=0,
-                event="approval_persistence_failed",
+                step=state.steps,
+                event=(
+                    "approval_persistence_failed"
+                ),
                 detail=(
-                    "Approval persistence is enabled "
-                    "but no active run_id exists."
+                    "Approval persistence requires "
+                    "an active run_id and order_id."
                 ),
             )
 
             return False
+
+        context_hash = (
+            self._build_approval_context_hash(
+                state,
+                action=action,
+            )
+        )
 
         try:
             existing = (
@@ -224,17 +300,21 @@ class ControlledOrderAgent:
                 .get_latest_pending(
                     self.current_run_id,
                     action=action,
+                    order_id=state.order_id,
+                    context_hash=context_hash,
                 )
             )
 
             if existing is not None:
                 self.audit.log(
-                    step=0,
-                    event="approval_record_reused",
+                    step=state.steps,
+                    event=(
+                        "approval_record_reused"
+                    ),
                     detail=(
-                        "Existing pending approval "
-                        f"{existing['approval_id']} reused "
-                        f"for action={action}."
+                        "Matching pending approval "
+                        "reused for current WRITE "
+                        "context."
                     ),
                 )
 
@@ -243,18 +323,25 @@ class ControlledOrderAgent:
             created = (
                 self.approval_repository
                 .create_request(
-                    run_id=self.current_run_id,
+                    run_id=(
+                        self.current_run_id
+                    ),
                     action=action,
+                    order_id=state.order_id,
+                    context_hash=context_hash,
                 )
             )
 
             self.audit.log(
-                step=0,
-                event="approval_record_created",
+                step=state.steps,
+                event=(
+                    "approval_record_created"
+                ),
                 detail=(
-                    "Persistent approval request "
-                    f"{created['approval_id']} created "
-                    f"for action={action}."
+                    "Persistent context-bound "
+                    "approval request "
+                    f"{created['approval_id']} "
+                    "created."
                 ),
             )
 
@@ -262,8 +349,10 @@ class ControlledOrderAgent:
 
         except Exception as exc:
             self.audit.log(
-                step=0,
-                event="approval_persistence_failed",
+                step=state.steps,
+                event=(
+                    "approval_persistence_failed"
+                ),
                 detail=str(exc),
             )
 
@@ -271,34 +360,49 @@ class ControlledOrderAgent:
 
     def _persist_approval_decision(
         self,
+        state: AgentState,
         *,
         action: str,
         approved: bool,
         step: int,
     ) -> bool:
         """
-        Persist an explicit Human Approval decision.
+        Validate and persist Human Approval.
 
-        Security behavior is fail-closed:
-        if persistent approval is configured and
-        no valid pending approval exists, the WRITE
-        operation is not allowed to continue.
+        The pending approval must match the exact
+        WRITE context.
+
+        Approved authorizations are consumed before
+        WRITE execution so the same authorization
+        cannot be replayed.
         """
 
         if self.approval_repository is None:
             return True
 
-        if self.current_run_id is None:
+        if (
+            self.current_run_id is None
+            or state.order_id is None
+        ):
             self.audit.log(
                 step=step,
-                event="approval_decision_failed",
+                event=(
+                    "approval_decision_failed"
+                ),
                 detail=(
-                    "Approval decision cannot be "
-                    "persisted without an active run_id."
+                    "Approval validation requires "
+                    "an active run_id and order_id."
                 ),
             )
 
             return False
+
+        context_hash = (
+            self._build_approval_context_hash(
+                state,
+                action=action,
+            )
+        )
 
         try:
             pending = (
@@ -306,16 +410,20 @@ class ControlledOrderAgent:
                 .get_latest_pending(
                     self.current_run_id,
                     action=action,
+                    order_id=state.order_id,
+                    context_hash=context_hash,
                 )
             )
 
             if pending is None:
                 self.audit.log(
                     step=step,
-                    event="approval_decision_failed",
+                    event=(
+                        "approval_decision_failed"
+                    ),
                     detail=(
-                        "No pending persistent approval "
-                        f"exists for action={action}."
+                        "No pending approval matches "
+                        "the current WRITE context."
                     ),
                 )
 
@@ -330,7 +438,9 @@ class ControlledOrderAgent:
 
             self.audit.log(
                 step=step,
-                event="approval_record_decided",
+                event=(
+                    "approval_record_decided"
+                ),
                 detail=(
                     f"approval_id="
                     f"{decided['approval_id']}, "
@@ -338,12 +448,43 @@ class ControlledOrderAgent:
                 ),
             )
 
+            if approved:
+                consumed = (
+                    self.approval_repository
+                    .consume(
+                        decided["approval_id"],
+                        run_id=(
+                            self.current_run_id
+                        ),
+                        action=action,
+                        order_id=state.order_id,
+                        context_hash=(
+                            context_hash
+                        ),
+                    )
+                )
+
+                self.audit.log(
+                    step=step,
+                    event=(
+                        "approval_record_consumed"
+                    ),
+                    detail=(
+                        "One-time WRITE "
+                        "authorization "
+                        f"{consumed['approval_id']} "
+                        "consumed."
+                    ),
+                )
+
             return True
 
         except Exception as exc:
             self.audit.log(
                 step=step,
-                event="approval_decision_failed",
+                event=(
+                    "approval_decision_failed"
+                ),
                 detail=str(exc),
             )
 
@@ -375,9 +516,8 @@ class ControlledOrderAgent:
             latest_user_message=user_message,
         )
 
-        # Create the persistent Agent run first.
-        # This also binds the AuditLogger to the
-        # generated run_id.
+        # Create persistent Agent run before any
+        # persistent audit or approval record.
         self._persist_state(
             state
         )
@@ -385,7 +525,9 @@ class ControlledOrderAgent:
         self.audit.log(
             step=0,
             event="request_received",
-            detail="New user request received.",
+            detail=(
+                "New user request received."
+            ),
         )
 
         result = self._execute(
@@ -427,8 +569,9 @@ class ControlledOrderAgent:
                 step=state.steps,
                 event="user_input_error",
                 detail=(
-                    "User input received while Agent "
-                    "was not waiting for input."
+                    "User input received while "
+                    "Agent was not waiting "
+                    "for input."
                 ),
             )
 
@@ -454,7 +597,9 @@ class ControlledOrderAgent:
         self.audit.log(
             step=state.steps,
             event="user_input_received",
-            detail="Additional user input received.",
+            detail=(
+                "Additional user input received."
+            ),
         )
 
         result = self._execute(
@@ -481,8 +626,8 @@ class ControlledOrderAgent:
         has been explicitly approved or denied.
 
         When ApprovalRepository is configured,
-        the decision must be successfully persisted
-        before execution is allowed to continue.
+        the decision must match the exact persisted
+        approval context before execution continues.
         """
 
         if (
@@ -514,6 +659,7 @@ class ControlledOrderAgent:
 
         decision_persisted = (
             self._persist_approval_decision(
+                state,
                 action="create_ticket",
                 approved=approved,
                 step=state.steps,
@@ -543,7 +689,8 @@ class ControlledOrderAgent:
             step=state.steps,
             event="approval_received",
             detail=(
-                f"Explicit human approval = {approved}"
+                f"Explicit human approval = "
+                f"{approved}"
             ),
         )
 
@@ -594,7 +741,8 @@ class ControlledOrderAgent:
                     (
                         f"Maximum Agent steps "
                         f"({MAX_STEPS}) reached. "
-                        "Request escalated to a human."
+                        "Request escalated "
+                        "to a human."
                     ),
                 )
 
@@ -608,8 +756,10 @@ class ControlledOrderAgent:
             )
 
             try:
-                decision = self.planner.decide(
-                    state
+                decision = (
+                    self.planner.decide(
+                        state
+                    )
                 )
 
             except Exception as exc:
@@ -635,7 +785,8 @@ class ControlledOrderAgent:
                 step=state.steps,
                 event="planner_decision",
                 detail=(
-                    f"action={decision.action.value}"
+                    f"action="
+                    f"{decision.action.value}"
                 ),
             )
 
@@ -657,7 +808,9 @@ class ControlledOrderAgent:
 
                 self.audit.log(
                     step=state.steps,
-                    event="user_input_requested",
+                    event=(
+                        "user_input_requested"
+                    ),
                     detail=(
                         "Agent requires order_id "
                         "before continuing."
@@ -682,9 +835,15 @@ class ControlledOrderAgent:
                     AgentStatus.LOOKING_UP_ORDER,
                 )
 
+                # --------------------------------------------
+                # POLICY
+                # --------------------------------------------
+
                 policy_result = (
                     evaluate_tool_policy(
-                        tool_name="lookup_order",
+                        tool_name=(
+                            "lookup_order"
+                        ),
                     )
                 )
 
@@ -717,6 +876,10 @@ class ControlledOrderAgent:
                         ),
                     )
 
+                # --------------------------------------------
+                # ORDER ID
+                # --------------------------------------------
+
                 order_id = (
                     decision.order_id
                     or state.order_id
@@ -725,8 +888,12 @@ class ControlledOrderAgent:
                 if order_id is None:
                     self.audit.log(
                         step=state.steps,
-                        event="validation_failed",
-                        detail="order_id is missing.",
+                        event=(
+                            "validation_failed"
+                        ),
+                        detail=(
+                            "order_id is missing."
+                        ),
                     )
 
                     return mark_failed(
@@ -736,21 +903,29 @@ class ControlledOrderAgent:
 
                 self.audit.log(
                     step=state.steps,
-                    event="lookup_order_called",
+                    event=(
+                        "lookup_order_called"
+                    ),
                     detail=(
                         f"order_id={order_id}"
                     ),
                 )
+
+                # --------------------------------------------
+                # TOOL EXECUTION
+                # --------------------------------------------
 
                 try:
                     result = (
                         lookup_order_with_retry(
                             order_id,
                             simulate_timeout=(
-                                self.simulate_lookup_timeout
+                                self
+                                .simulate_lookup_timeout
                             ),
                             simulate_injection=(
-                                self.simulate_lookup_injection
+                                self
+                                .simulate_lookup_injection
                             ),
                         )
                     )
@@ -791,6 +966,10 @@ class ControlledOrderAgent:
                         ),
                     )
 
+                # --------------------------------------------
+                # SAFE VALIDATED RESULT
+                # --------------------------------------------
+
                 state.order_id = (
                     result.order_id
                 )
@@ -805,10 +984,13 @@ class ControlledOrderAgent:
 
                 self.audit.log(
                     step=state.steps,
-                    event="tool_output_validated",
+                    event=(
+                        "tool_output_validated"
+                    ),
                     detail=(
-                        f"lookup_order validated; "
-                        f"status={result.status.value}, "
+                        "lookup_order validated; "
+                        f"status="
+                        f"{result.status.value}, "
                         f"days_delayed="
                         f"{result.days_delayed}"
                     ),
@@ -831,7 +1013,9 @@ class ControlledOrderAgent:
             ):
                 policy_result = (
                     evaluate_tool_policy(
-                        tool_name="create_ticket",
+                        tool_name=(
+                            "create_ticket"
+                        ),
                         days_delayed=(
                             state.days_delayed
                         ),
@@ -849,6 +1033,10 @@ class ControlledOrderAgent:
                         f"{policy_result.value}"
                     ),
                 )
+
+                # --------------------------------------------
+                # DENIED
+                # --------------------------------------------
 
                 if (
                     policy_result
@@ -871,15 +1059,24 @@ class ControlledOrderAgent:
                         ),
                     )
 
+                # --------------------------------------------
+                # REQUIRE HUMAN APPROVAL
+                # --------------------------------------------
+
                 if (
                     policy_result
                     == PolicyDecision.REQUIRE_APPROVAL
                 ):
-                    state.awaiting_approval = True
+                    state.awaiting_approval = (
+                        True
+                    )
 
                     set_status(
                         state,
-                        AgentStatus.WAITING_FOR_APPROVAL,
+                        (
+                            AgentStatus
+                            .WAITING_FOR_APPROVAL
+                        ),
                     )
 
                     state.final_message = (
@@ -892,6 +1089,7 @@ class ControlledOrderAgent:
 
                     approval_ready = (
                         self._ensure_pending_approval(
+                            state,
                             action="create_ticket",
                         )
                     )
@@ -900,15 +1098,17 @@ class ControlledOrderAgent:
                         return mark_failed(
                             state,
                             (
-                                "Human approval request "
-                                "could not be persisted "
-                                "safely."
+                                "Human approval "
+                                "request could not "
+                                "be persisted safely."
                             ),
                         )
 
                     self.audit.log(
                         step=state.steps,
-                        event="approval_requested",
+                        event=(
+                            "approval_requested"
+                        ),
                         detail=(
                             "WRITE action paused "
                             "until explicit "
@@ -928,9 +1128,15 @@ class ControlledOrderAgent:
                 decision.action
                 == AgentAction.CREATE_TICKET
             ):
+                # --------------------------------------------
+                # INDEPENDENT POLICY GATE
+                # --------------------------------------------
+
                 policy_result = (
                     evaluate_tool_policy(
-                        tool_name="create_ticket",
+                        tool_name=(
+                            "create_ticket"
+                        ),
                         days_delayed=(
                             state.days_delayed
                         ),
@@ -970,11 +1176,19 @@ class ControlledOrderAgent:
                         ),
                     )
 
+                # --------------------------------------------
+                # REQUIRED STATE
+                # --------------------------------------------
+
                 if state.order_id is None:
                     self.audit.log(
                         step=state.steps,
-                        event="validation_failed",
-                        detail="order_id is missing.",
+                        event=(
+                            "validation_failed"
+                        ),
+                        detail=(
+                            "order_id is missing."
+                        ),
                     )
 
                     return mark_failed(
@@ -985,7 +1199,9 @@ class ControlledOrderAgent:
                 if state.days_delayed is None:
                     self.audit.log(
                         step=state.steps,
-                        event="validation_failed",
+                        event=(
+                            "validation_failed"
+                        ),
                         detail=(
                             "days_delayed "
                             "is missing."
@@ -999,6 +1215,10 @@ class ControlledOrderAgent:
                             "is missing."
                         ),
                     )
+
+                # --------------------------------------------
+                # WRITE TOOL
+                # --------------------------------------------
 
                 set_status(
                     state,
@@ -1017,9 +1237,12 @@ class ControlledOrderAgent:
 
                 self.audit.log(
                     step=state.steps,
-                    event="create_ticket_called",
+                    event=(
+                        "create_ticket_called"
+                    ),
                     detail=(
-                        f"order_id={state.order_id}"
+                        f"order_id="
+                        f"{state.order_id}"
                     ),
                 )
 
@@ -1030,13 +1253,17 @@ class ControlledOrderAgent:
                         idempotency_key=(
                             idempotency_key
                         ),
-                        service=self.ticket_service,
+                        service=(
+                            self.ticket_service
+                        ),
                     )
 
                 except Exception as exc:
                     self.audit.log(
                         step=state.steps,
-                        event="write_tool_failed",
+                        event=(
+                            "write_tool_failed"
+                        ),
                         detail=str(exc),
                     )
 
@@ -1058,9 +1285,14 @@ class ControlledOrderAgent:
                     detail=(
                         f"ticket_id="
                         f"{ticket.ticket_id}, "
-                        f"status={ticket.status}"
+                        f"status="
+                        f"{ticket.status}"
                     ),
                 )
+
+                # --------------------------------------------
+                # DIRECT SAFE FINAL RESPONSE
+                # --------------------------------------------
 
                 final_message = (
                     "تیکت پشتیبانی با شناسه "
