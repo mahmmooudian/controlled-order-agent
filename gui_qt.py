@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import html
-import io
 import os
 import re
 import subprocess
 import sys
 
-from contextlib import redirect_stdout
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
@@ -33,8 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.agent import ControlledOrderAgent
-from app.planner import RuleBasedPlanner
+from controlled_agent.client import (
+    ApiClientError,
+    ControlledAgentApiClient,
+    GuiAgentAdapter,
+)
 
 
 # ============================================================
@@ -59,42 +60,6 @@ def contains_persian(text: str) -> bool:
             r"[\u0600-\u06FF]",
             str(text),
         )
-    )
-
-
-def create_planner(mode: str):
-    """
-    Create the selected Planner.
-
-    RuleBasedPlanner is the reliable live-demo default.
-    OpenAI remains an optional integration.
-    """
-
-    normalized = mode.strip().lower()
-
-    if normalized == "openai":
-        try:
-            from app.llm_planner import LLMPlanner
-
-            planner = LLMPlanner()
-
-            return (
-                planner,
-                "OpenAI LLM Planner",
-            )
-
-        except Exception as exc:
-            return (
-                RuleBasedPlanner(),
-                (
-                    "RuleBasedPlanner "
-                    f"(OpenAI unavailable: {exc})"
-                ),
-            )
-
-    return (
-        RuleBasedPlanner(),
-        "RuleBasedPlanner",
     )
 
 
@@ -626,15 +591,14 @@ class ControlledAgentWindow(QMainWindow):
 
         self.planner_combo.addItems(
             [
-                "RuleBased",
-                "OpenAI",
+                "RuleBased (API)",
             ]
         )
 
         self.planner_combo.setToolTip(
             (
-                "RuleBased is recommended for the live demo.\n"
-                "OpenAI requires an available API key and credits."
+                "Planner execution is handled by the "
+                "FastAPI backend."
             )
         )
 
@@ -1604,40 +1568,78 @@ class ControlledAgentWindow(QMainWindow):
 
 
     # ========================================================
-    # NEW SESSION
+    # API CONNECTION / NEW SESSION
     # ========================================================
+
+    def _create_api_agent(
+        self,
+        *,
+        simulate_lookup_injection: bool = False,
+    ):
+
+        api_url = (
+            os.getenv(
+                "CONTROLLED_AGENT_API_URL",
+                "http://127.0.0.1:8000",
+            )
+            .strip()
+        )
+
+        if not api_url:
+            api_url = (
+                "http://127.0.0.1:8000"
+            )
+
+        client = ControlledAgentApiClient(
+            base_url=api_url,
+            timeout=3.0,
+        )
+
+        try:
+            health = client.health()
+
+            if not client.ready():
+                raise ApiClientError(
+                    "Controlled Agent API "
+                    "is not ready."
+                )
+
+        except Exception:
+            client.close()
+            raise
+
+        agent = GuiAgentAdapter(
+            client=client,
+            simulate_lookup_injection=(
+                simulate_lookup_injection
+            ),
+        )
+
+        return (
+            agent,
+            api_url,
+            health,
+        )
+
 
     def new_session(self):
 
-        selected = (
-            self.planner_combo.currentText()
-        )
+        # ----------------------------------------------------
+        # CLOSE PREVIOUS HTTP CLIENT
+        # ----------------------------------------------------
 
-        planner_mode = (
-            "openai"
-            if selected.lower().startswith(
-                "openai"
-            )
-            else "rule"
-        )
+        if self.agent is not None:
+            try:
+                self.agent.close()
+            except Exception:
+                pass
 
-        planner, planner_name = (
-            create_planner(
-                planner_mode
-            )
-        )
-
-        self.agent = (
-            ControlledOrderAgent(
-                planner
-            )
-        )
-
+        self.agent = None
         self.state = None
 
-        self.current_planner_name = (
-            planner_name
-        )
+        # ----------------------------------------------------
+        # RESET UI
+        # ----------------------------------------------------
 
         self._clear_chat()
 
@@ -1647,16 +1649,79 @@ class ControlledAgentWindow(QMainWindow):
             0
         )
 
+        # ----------------------------------------------------
+        # CONNECT TO API
+        # ----------------------------------------------------
+
+        try:
+            (
+                self.agent,
+                api_url,
+                health,
+            ) = self._create_api_agent()
+
+        except Exception as exc:
+
+            self.current_planner_name = (
+                "API unavailable"
+            )
+
+            self._append_chat(
+                "SYSTEM",
+                (
+                    "اتصال به سرویس Agent برقرار نشد.\n"
+                    "ابتدا FastAPI backend را اجرا کنید."
+                ),
+            )
+
+            self._append_runtime(
+                (
+                    "[API CONNECTION ERROR]\n"
+                    f"{exc}"
+                )
+            )
+
+            self.refresh_ui()
+
+            QMessageBox.warning(
+                self,
+                "API unavailable",
+                (
+                    "Could not connect to the "
+                    "Controlled Agent API.\n\n"
+                    f"{exc}"
+                ),
+            )
+
+            return
+
+        # ----------------------------------------------------
+        # SESSION READY
+        # ----------------------------------------------------
+
+        self.current_planner_name = (
+            "RuleBasedPlanner (API)"
+        )
+
+        service_name = health.get(
+            "service",
+            "Controlled Agent API",
+        )
+
         self._append_chat(
             "SYSTEM",
             (
                 "نشست جدید شروع شد.\n"
-                f"Planner: {planner_name}"
+                "Planner: RuleBasedPlanner (API)"
             ),
         )
 
         self._append_runtime(
-            f"[SESSION] Planner = {planner_name}"
+            (
+                "[API CONNECTED]\n"
+                f"Service: {service_name}\n"
+                f"URL: {api_url}"
+            )
         )
 
         self.refresh_ui()
@@ -1695,6 +1760,22 @@ class ControlledAgentWindow(QMainWindow):
             "USER",
             text,
         )
+
+        if self.agent is None:
+            self._append_chat(
+                "SYSTEM",
+                (
+                    "سرویس Agent در دسترس نیست. "
+                    "Backend را اجرا کنید و سپس "
+                    "New Session را بزنید."
+                ),
+            )
+
+            self._append_runtime(
+                "[API ERROR] No active API session."
+            )
+
+            return
 
         # ----------------------------------------------------
         # DO NOT ALLOW CHAT TEXT TO BYPASS APPROVAL
@@ -1844,7 +1925,7 @@ class ControlledAgentWindow(QMainWindow):
 
 
     # ========================================================
-    # CAPTURE TOOL / RUNTIME OUTPUT
+    # API CALL / RUNTIME LOGGING
     # ========================================================
 
     def _capture_runtime(
@@ -1854,24 +1935,48 @@ class ControlledAgentWindow(QMainWindow):
         **kwargs,
     ):
 
-        buffer = io.StringIO()
-
-        with redirect_stdout(buffer):
-            result = function(
-                *args,
-                **kwargs,
-            )
-
-        output = (
-            buffer
-            .getvalue()
-            .strip()
+        operation_name = getattr(
+            function,
+            "__name__",
+            "api_call",
         )
 
-        if output:
-            self._append_runtime(
-                output
+        self._append_runtime(
+            f"[API REQUEST] {operation_name}"
+        )
+
+        result = function(
+            *args,
+            **kwargs,
+        )
+
+        status = getattr(
+            getattr(
+                result,
+                "status",
+                None,
+            ),
+            "value",
+            getattr(
+                result,
+                "status",
+                "unknown",
+            ),
+        )
+
+        run_id = getattr(
+            result,
+            "run_id",
+            "-",
+        )
+
+        self._append_runtime(
+            (
+                "[API RESPONSE] "
+                f"run_id={run_id} "
+                f"status={status}"
             )
+        )
 
         return result
 
@@ -2463,22 +2568,66 @@ class ControlledAgentWindow(QMainWindow):
 
     def demo_injection(self):
 
-        planner, planner_name = (
-            create_planner("rule")
-        )
+        # ----------------------------------------------------
+        # CLOSE CURRENT SESSION
+        # ----------------------------------------------------
 
-        self.agent = (
-            ControlledOrderAgent(
-                planner,
-                simulate_lookup_injection=True,
-            )
-        )
+        if self.agent is not None:
+            try:
+                self.agent.close()
+            except Exception:
+                pass
 
+        self.agent = None
         self.state = None
 
+        # ----------------------------------------------------
+        # CREATE API-BACKED SECURITY SESSION
+        # ----------------------------------------------------
+
+        try:
+            (
+                self.agent,
+                api_url,
+                _health,
+            ) = self._create_api_agent(
+                simulate_lookup_injection=True,
+            )
+
+        except Exception as exc:
+
+            self.current_planner_name = (
+                "API unavailable"
+            )
+
+            self._append_runtime(
+                (
+                    "[API CONNECTION ERROR]\n"
+                    f"{exc}"
+                )
+            )
+
+            self.refresh_ui()
+
+            QMessageBox.warning(
+                self,
+                "API unavailable",
+                (
+                    "Could not connect to the "
+                    "Controlled Agent API.\n\n"
+                    f"{exc}"
+                ),
+            )
+
+            return
+
         self.current_planner_name = (
-            planner_name
+            "RuleBasedPlanner (API)"
         )
+
+        # ----------------------------------------------------
+        # RESET UI
+        # ----------------------------------------------------
 
         self._clear_chat()
 
@@ -2506,7 +2655,8 @@ class ControlledAgentWindow(QMainWindow):
                 "Expected behavior:\n"
                 "- Discard untrusted field\n"
                 "- Do not create any ticket\n"
-                "- Continue using validated fields only"
+                "- Continue using validated fields only\n\n"
+                f"Backend: {api_url}"
             )
         )
 
@@ -2635,6 +2785,26 @@ class ControlledAgentWindow(QMainWindow):
             self.eval_output.appendPlainText(
                 f"\nEvaluation failed:\n{exc}"
             )
+
+
+    # ========================================================
+    # WINDOW SHUTDOWN
+    # ========================================================
+
+    def closeEvent(
+        self,
+        event,
+    ):
+
+        if self.agent is not None:
+            try:
+                self.agent.close()
+            except Exception:
+                pass
+
+        super().closeEvent(
+            event
+        )
 
 
 # ============================================================
