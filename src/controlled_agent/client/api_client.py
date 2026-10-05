@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from typing import Any
 
 import httpx
@@ -30,25 +32,149 @@ class ControlledAgentApiClient:
     HTTP client used by desktop/UI applications
     to communicate with the FastAPI backend.
 
-    The GUI must use this client instead of calling
-    ControlledOrderAgent directly.
+    Reliability policy:
+
+    - GET requests may be retried because they are
+      read-only and idempotent.
+    - POST requests are never retried automatically.
+    - Only transient network errors and selected
+      gateway/service errors are retryable.
+    - Connect/read/write/pool timeouts are configured
+      independently.
     """
+
+    RETRYABLE_STATUS_CODES = {
+        502,
+        503,
+        504,
+    }
+
+    RETRYABLE_EXCEPTIONS = (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.ReadTimeout,
+        httpx.PoolTimeout,
+    )
 
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:8000",
         *,
-        timeout: float = 10.0,
+        timeout: float | httpx.Timeout | None = None,
+        connect_timeout: float = 3.0,
+        read_timeout: float = 10.0,
+        write_timeout: float = 10.0,
+        pool_timeout: float = 3.0,
+        max_get_retries: int = 2,
+        retry_backoff: float = 0.10,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
 
+        if max_get_retries < 0:
+            raise ValueError(
+                "max_get_retries must be >= 0."
+            )
+
+        if retry_backoff < 0:
+            raise ValueError(
+                "retry_backoff must be >= 0."
+            )
+
         self.base_url = base_url.rstrip("/")
+
+        self.max_get_retries = (
+            max_get_retries
+        )
+
+        self.retry_backoff = (
+            retry_backoff
+        )
+
+        if timeout is None:
+            resolved_timeout = httpx.Timeout(
+                connect=connect_timeout,
+                read=read_timeout,
+                write=write_timeout,
+                pool=pool_timeout,
+            )
+        elif isinstance(
+            timeout,
+            httpx.Timeout,
+        ):
+            resolved_timeout = timeout
+        else:
+            # Backwards compatibility for callers
+            # that already pass timeout=3.0, etc.
+            resolved_timeout = httpx.Timeout(
+                timeout
+            )
 
         self._client = httpx.Client(
             base_url=self.base_url,
-            timeout=timeout,
+            timeout=resolved_timeout,
             transport=transport,
         )
+
+    # ========================================================
+    # RETRY POLICY
+    # ========================================================
+
+    @staticmethod
+    def _is_retryable_method(
+        method: str,
+    ) -> bool:
+        """
+        Only retry read-only HTTP operations.
+
+        POST requests may produce side effects, so
+        they must never be replayed automatically.
+        """
+
+        return (
+            method.upper()
+            == "GET"
+        )
+
+    def _can_retry(
+        self,
+        method: str,
+        attempt: int,
+    ) -> bool:
+        """
+        Return whether another attempt is allowed.
+
+        attempt is zero-based.
+        """
+
+        return (
+            self._is_retryable_method(
+                method
+            )
+            and attempt
+            < self.max_get_retries
+        )
+
+    def _sleep_before_retry(
+        self,
+        attempt: int,
+    ) -> None:
+        """
+        Apply a small bounded linear backoff.
+
+        Examples with retry_backoff=0.1:
+            retry 1 -> 0.1 seconds
+            retry 2 -> 0.2 seconds
+        """
+
+        delay = (
+            self.retry_backoff
+            * (attempt + 1)
+        )
+
+        if delay > 0:
+            time.sleep(
+                delay
+            )
 
     # ========================================================
     # INTERNAL REQUEST HANDLING
@@ -62,35 +188,110 @@ class ControlledAgentApiClient:
         json: dict[str, Any] | None = None,
     ) -> httpx.Response:
         """
-        Execute one HTTP request and convert
-        connection/API failures into ApiClientError.
+        Execute one HTTP request.
+
+        GET requests receive bounded retry handling
+        for transient failures.
+
+        POST requests are executed exactly once to
+        avoid accidental duplicate side effects.
         """
 
-        try:
-            response = self._client.request(
-                method,
-                path,
-                json=json,
+        normalized_method = (
+            method.upper()
+        )
+
+        attempt = 0
+
+        while True:
+
+            try:
+                response = self._client.request(
+                    normalized_method,
+                    path,
+                    json=json,
+                )
+
+            except self.RETRYABLE_EXCEPTIONS as exc:
+
+                if self._can_retry(
+                    normalized_method,
+                    attempt,
+                ):
+                    self._sleep_before_retry(
+                        attempt
+                    )
+
+                    attempt += 1
+                    continue
+
+                if isinstance(
+                    exc,
+                    httpx.TimeoutException,
+                ):
+                    raise ApiClientError(
+                        (
+                            "Controlled Order Agent API "
+                            "request timed out."
+                        )
+                    ) from exc
+
+                raise ApiClientError(
+                    (
+                        "Could not connect to "
+                        "Controlled Order Agent API."
+                    )
+                ) from exc
+
+            except httpx.TimeoutException as exc:
+                # Other timeout subclasses that are
+                # intentionally not retried.
+                raise ApiClientError(
+                    (
+                        "Controlled Order Agent API "
+                        "request timed out."
+                    )
+                ) from exc
+
+            except httpx.RequestError as exc:
+                # Non-transient request errors are not
+                # automatically replayed.
+                raise ApiClientError(
+                    (
+                        "Could not connect to "
+                        "Controlled Order Agent API."
+                    )
+                ) from exc
+
+            if response.is_success:
+                return response
+
+            if (
+                response.status_code
+                in self.RETRYABLE_STATUS_CODES
+                and self._can_retry(
+                    normalized_method,
+                    attempt,
+                )
+            ):
+                self._sleep_before_retry(
+                    attempt
+                )
+
+                attempt += 1
+                continue
+
+            detail = self._extract_error_detail(
+                response
             )
 
-        except httpx.RequestError as exc:
             raise ApiClientError(
-                "Could not connect to "
-                "Controlled Order Agent API."
-            ) from exc
-
-        if response.is_success:
-            return response
-
-        detail = self._extract_error_detail(
-            response
-        )
-
-        raise ApiClientError(
-            f"API request failed "
-            f"({response.status_code}): "
-            f"{detail}"
-        )
+                (
+                    f"API request failed "
+                    f"({response.status_code}): "
+                    f"{detail}"
+                )
+            )
 
     @staticmethod
     def _extract_error_detail(
@@ -179,6 +380,9 @@ class ControlledAgentApiClient:
         """
         Create a new Agent execution.
 
+        POST is intentionally not retried because
+        creating a run may have side effects.
+
         simulate_lookup_injection is used only
         by the controlled security demonstration.
         """
@@ -236,6 +440,8 @@ class ControlledAgentApiClient:
         """
         Continue a run that is waiting
         for additional user input.
+
+        This POST is never automatically retried.
         """
 
         response = self._request(
@@ -265,6 +471,9 @@ class ControlledAgentApiClient:
         """
         Submit the user's explicit decision for
         a sensitive WRITE action.
+
+        Approval is security-sensitive and must
+        never be automatically replayed.
         """
 
         response = self._request(
