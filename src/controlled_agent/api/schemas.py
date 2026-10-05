@@ -31,7 +31,7 @@ class ReadinessResponse(BaseModel):
 
 
 # ============================================================
-# CREATE RUN
+# CREATE AGENT RUN
 # ============================================================
 
 class CreateAgentRunRequest(BaseModel):
@@ -43,6 +43,8 @@ class CreateAgentRunRequest(BaseModel):
         min_length=1,
         max_length=4000,
     )
+
+    simulate_lookup_injection: bool = False
 
 
 # ============================================================
@@ -73,7 +75,7 @@ class AgentApprovalRequest(BaseModel):
 
 
 # ============================================================
-# PUBLIC RUN RESPONSE
+# PUBLIC AGENT RUN RESPONSE
 # ============================================================
 
 class AgentRunResponse(BaseModel):
@@ -82,16 +84,27 @@ class AgentRunResponse(BaseModel):
     )
 
     run_id: str
+
     status: str
+
     steps: int
+
     finished: bool
+
     awaiting_user_input: bool
+
     awaiting_approval: bool
 
+    human_approved: bool | None = None
+
     order_id: str | None = None
+
     order_status: str | None = None
+
     days_delayed: int | None = None
+
     ticket_id: str | None = None
+
     final_message: str | None = None
 
 
@@ -105,6 +118,9 @@ class AuditEventResponse(BaseModel):
     )
 
     timestamp: str
+
     step: int
+
     event: str
+
     detail: str

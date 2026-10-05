@@ -1,6 +1,6 @@
 import httpx
 import pytest
-
+import json
 from controlled_agent.client import (
     ApiClientError,
     ControlledAgentApiClient,
@@ -230,5 +230,49 @@ def test_api_client_reports_connection_errors():
         match="Could not connect",
     ):
         client.health()
+
+    client.close()
+def test_api_client_sends_injection_flag():
+    observed = {
+        "simulate_lookup_injection": None,
+    }
+
+    def handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        payload = json.loads(
+            request.content.decode(
+                "utf-8"
+            )
+        )
+
+        observed[
+            "simulate_lookup_injection"
+        ] = payload[
+            "simulate_lookup_injection"
+        ]
+
+        return httpx.Response(
+            201,
+            json=RUN_RESPONSE,
+        )
+
+    client = ControlledAgentApiClient(
+        transport=httpx.MockTransport(
+            handler
+        )
+    )
+
+    client.create_run(
+        "Check order 45821.",
+        simulate_lookup_injection=True,
+    )
+
+    assert (
+        observed[
+            "simulate_lookup_injection"
+        ]
+        is True
+    )
 
     client.close()

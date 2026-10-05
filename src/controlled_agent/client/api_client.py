@@ -4,12 +4,16 @@ from typing import Any
 
 import httpx
 
-from controlled_agent.api.schemas import AgentRunResponse
-
 from controlled_agent.api.schemas import (
     AgentRunResponse,
     AuditEventResponse,
 )
+
+
+# ============================================================
+# CLIENT ERRORS
+# ============================================================
+
 class ApiClientError(RuntimeError):
     """
     Raised when the Controlled Agent API cannot
@@ -17,13 +21,17 @@ class ApiClientError(RuntimeError):
     """
 
 
+# ============================================================
+# CONTROLLED AGENT API CLIENT
+# ============================================================
+
 class ControlledAgentApiClient:
     """
     HTTP client used by desktop/UI applications
     to communicate with the FastAPI backend.
 
-    The GUI must not call ControlledOrderAgent
-    directly once migration is complete.
+    The GUI must use this client instead of calling
+    ControlledOrderAgent directly.
     """
 
     def __init__(
@@ -33,6 +41,7 @@ class ControlledAgentApiClient:
         timeout: float = 10.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+
         self.base_url = base_url.rstrip("/")
 
         self._client = httpx.Client(
@@ -52,6 +61,11 @@ class ControlledAgentApiClient:
         *,
         json: dict[str, Any] | None = None,
     ) -> httpx.Response:
+        """
+        Execute one HTTP request and convert
+        connection/API failures into ApiClientError.
+        """
+
         try:
             response = self._client.request(
                 method,
@@ -82,27 +96,48 @@ class ControlledAgentApiClient:
     def _extract_error_detail(
         response: httpx.Response,
     ) -> str:
+        """
+        Extract a readable error message from
+        FastAPI-style JSON error responses.
+        """
+
         try:
             payload = response.json()
 
         except ValueError:
-            return response.text or "Unknown API error."
+            return (
+                response.text
+                or "Unknown API error."
+            )
 
-        if isinstance(payload, dict):
-            detail = payload.get("detail")
+        if isinstance(
+            payload,
+            dict,
+        ):
+            detail = payload.get(
+                "detail"
+            )
 
             if detail is not None:
-                return str(detail)
+                return str(
+                    detail
+                )
 
-        return str(payload)
+        return str(
+            payload
+        )
 
     # ========================================================
-    # HEALTH
+    # HEALTH / READINESS
     # ========================================================
 
     def health(
         self,
     ) -> dict[str, Any]:
+        """
+        Return API liveness information.
+        """
+
         response = self._request(
             "GET",
             "/health",
@@ -113,6 +148,11 @@ class ControlledAgentApiClient:
     def ready(
         self,
     ) -> bool:
+        """
+        Return whether the API reports itself
+        as ready for requests.
+        """
+
         response = self._request(
             "GET",
             "/ready",
@@ -121,7 +161,9 @@ class ControlledAgentApiClient:
         payload = response.json()
 
         return bool(
-            payload.get("ready")
+            payload.get(
+                "ready"
+            )
         )
 
     # ========================================================
@@ -131,17 +173,31 @@ class ControlledAgentApiClient:
     def create_run(
         self,
         message: str,
+        *,
+        simulate_lookup_injection: bool = False,
     ) -> AgentRunResponse:
+        """
+        Create a new Agent execution.
+
+        simulate_lookup_injection is used only
+        by the controlled security demonstration.
+        """
+
         response = self._request(
             "POST",
             "/agent/runs",
             json={
                 "message": message,
+                "simulate_lookup_injection": (
+                    simulate_lookup_injection
+                ),
             },
         )
 
-        return AgentRunResponse.model_validate(
-            response.json()
+        return (
+            AgentRunResponse.model_validate(
+                response.json()
+            )
         )
 
     # ========================================================
@@ -152,17 +208,24 @@ class ControlledAgentApiClient:
         self,
         run_id: str,
     ) -> AgentRunResponse:
+        """
+        Restore the latest persisted state
+        of an Agent run.
+        """
+
         response = self._request(
             "GET",
             f"/agent/runs/{run_id}",
         )
 
-        return AgentRunResponse.model_validate(
-            response.json()
+        return (
+            AgentRunResponse.model_validate(
+                response.json()
+            )
         )
 
     # ========================================================
-    # CONTINUE WITH INPUT
+    # CONTINUE WITH USER INPUT
     # ========================================================
 
     def send_input(
@@ -170,6 +233,11 @@ class ControlledAgentApiClient:
         run_id: str,
         message: str,
     ) -> AgentRunResponse:
+        """
+        Continue a run that is waiting
+        for additional user input.
+        """
+
         response = self._request(
             "POST",
             f"/agent/runs/{run_id}/input",
@@ -178,8 +246,10 @@ class ControlledAgentApiClient:
             },
         )
 
-        return AgentRunResponse.model_validate(
-            response.json()
+        return (
+            AgentRunResponse.model_validate(
+                response.json()
+            )
         )
 
     # ========================================================
@@ -192,6 +262,11 @@ class ControlledAgentApiClient:
         *,
         approved: bool,
     ) -> AgentRunResponse:
+        """
+        Submit the user's explicit decision for
+        a sensitive WRITE action.
+        """
+
         response = self._request(
             "POST",
             f"/agent/runs/{run_id}/approval",
@@ -200,9 +275,38 @@ class ControlledAgentApiClient:
             },
         )
 
-        return AgentRunResponse.model_validate(
-            response.json()
+        return (
+            AgentRunResponse.model_validate(
+                response.json()
+            )
         )
+
+    # ========================================================
+    # AUDIT / EXECUTION TRACE
+    # ========================================================
+
+    def get_audit(
+        self,
+        run_id: str,
+    ) -> list[AuditEventResponse]:
+        """
+        Return the persisted operational trace
+        for one Agent run.
+        """
+
+        response = self._request(
+            "GET",
+            f"/agent/runs/{run_id}/audit",
+        )
+
+        payload = response.json()
+
+        return [
+            AuditEventResponse.model_validate(
+                item
+            )
+            for item in payload
+        ]
 
     # ========================================================
     # RESOURCE MANAGEMENT
@@ -211,6 +315,10 @@ class ControlledAgentApiClient:
     def close(
         self,
     ) -> None:
+        """
+        Close the underlying HTTP connection pool.
+        """
+
         self._client.close()
 
     def __enter__(
@@ -225,24 +333,3 @@ class ControlledAgentApiClient:
         traceback,
     ) -> None:
         self.close()
-            # ========================================================
-    # AUDIT / EXECUTION TRACE
-    # ========================================================
-
-    def get_audit(
-        self,
-        run_id: str,
-    ) -> list[AuditEventResponse]:
-        response = self._request(
-            "GET",
-            f"/agent/runs/{run_id}/audit",
-        )
-
-        payload = response.json()
-
-        return [
-            AuditEventResponse.model_validate(
-                item
-            )
-            for item in payload
-        ]

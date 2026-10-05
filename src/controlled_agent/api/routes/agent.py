@@ -68,6 +68,9 @@ def _state_to_response(
         awaiting_approval=(
             state.awaiting_approval
         ),
+        human_approved=(
+            state.human_approved
+        ),
         order_id=state.order_id,
         order_status=order_status,
         days_delayed=state.days_delayed,
@@ -126,6 +129,10 @@ def create_agent_run(
     Create and execute a new controlled
     Agent run.
     """
+
+    agent.simulate_lookup_injection = (
+        request.simulate_lookup_injection
+    )
 
     state = agent.run(
         request.message
