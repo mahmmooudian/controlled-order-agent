@@ -4,27 +4,28 @@ import os
 from dataclasses import dataclass
 
 
-# ============================================================
-# SETTINGS
-# ============================================================
-
 @dataclass(frozen=True)
 class ApiSettings:
-    app_name: str = "Controlled Order Agent API"
+    app_name: str = (
+        "Controlled Order Agent API"
+    )
+
     environment: str = "development"
+
     debug: bool = False
+
     log_level: str = "INFO"
 
+    allow_security_simulation: bool = False
 
-# ============================================================
-# HELPERS
-# ============================================================
 
 def _parse_bool(
     value: str,
 ) -> bool:
     return (
-        value.strip().lower()
+        value
+        .strip()
+        .lower()
         in {
             "1",
             "true",
@@ -38,7 +39,9 @@ def _resolve_log_level(
     value: str,
 ) -> str:
     normalized = (
-        value.strip().upper()
+        value
+        .strip()
+        .upper()
     )
 
     allowed = {
@@ -54,10 +57,6 @@ def _resolve_log_level(
 
     return normalized
 
-
-# ============================================================
-# PUBLIC SETTINGS
-# ============================================================
 
 def get_settings() -> ApiSettings:
     environment = (
@@ -76,8 +75,7 @@ def get_settings() -> ApiSettings:
         )
     )
 
-    # Never expose FastAPI/Starlette debug
-    # tracebacks in production.
+    # Debug is never permitted in production.
     debug = (
         debug_requested
         and environment != "production"
@@ -90,8 +88,28 @@ def get_settings() -> ApiSettings:
         )
     )
 
+    simulation_requested = _parse_bool(
+        os.getenv(
+            (
+                "CONTROLLED_AGENT_"
+                "ALLOW_SECURITY_SIMULATION"
+            ),
+            "false",
+        )
+    )
+
+    # Security simulations require explicit opt-in
+    # and can never be enabled in production.
+    allow_security_simulation = (
+        simulation_requested
+        and environment != "production"
+    )
+
     return ApiSettings(
         environment=environment,
         debug=debug,
         log_level=log_level,
+        allow_security_simulation=(
+            allow_security_simulation
+        ),
     )

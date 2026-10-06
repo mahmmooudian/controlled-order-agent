@@ -7,6 +7,10 @@ from fastapi import (
     status,
 )
 
+from controlled_agent.api.config import (
+    ApiSettings,
+    get_settings,
+)
 from controlled_agent.api.dependencies import (
     get_agent,
     get_audit_repository,
@@ -124,21 +128,60 @@ def create_agent_run(
     agent: ControlledOrderAgent = Depends(
         get_agent
     ),
+    settings: ApiSettings = Depends(
+        get_settings
+    ),
 ) -> AgentRunResponse:
     """
-    Create and execute a new controlled
-    Agent run.
+    Create a new Agent run.
+
+    Security simulations are disabled by default
+    and require explicit server-side permission.
+
+    Production environments can never enable
+    simulated Prompt Injection through the
+    public API.
     """
 
+    # --------------------------------------------------------
+    # SECURITY SIMULATION BOUNDARY
+    # --------------------------------------------------------
+
+    if (
+        request.simulate_lookup_injection
+        and not (
+            settings
+            .allow_security_simulation
+        )
+    ):
+        raise HTTPException(
+            status_code=(
+                status.HTTP_403_FORBIDDEN
+            ),
+            detail=(
+                "Security simulation is "
+                "disabled for this environment."
+            ),
+        )
+
+    # The request may only activate the simulation
+    # after the server-side environment policy
+    # explicitly permits it.
     agent.simulate_lookup_injection = (
         request.simulate_lookup_injection
     )
 
-    state = agent.run(
+    # --------------------------------------------------------
+    # EXECUTE AGENT
+    # --------------------------------------------------------
+
+    result = agent.run(
         request.message
     )
 
-    run_id = agent.current_run_id
+    run_id = (
+        agent.current_run_id
+    )
 
     if run_id is None:
         raise HTTPException(
@@ -146,14 +189,13 @@ def create_agent_run(
                 status.HTTP_500_INTERNAL_SERVER_ERROR
             ),
             detail=(
-                "Agent run was created without "
-                "a persistent run_id."
+                "Agent run was not persisted."
             ),
         )
 
     return _state_to_response(
         run_id=run_id,
-        state=state,
+        state=result,
     )
 
 
@@ -172,7 +214,7 @@ def get_agent_run(
     ),
 ) -> AgentRunResponse:
     """
-    Return the current persisted state
+    Return the latest persisted state
     of one Agent run.
     """
 
@@ -203,7 +245,7 @@ def continue_agent_run(
     ),
 ) -> AgentRunResponse:
     """
-    Continue an Agent run that is waiting
+    Continue a run that is waiting
     for additional user input.
     """
 
