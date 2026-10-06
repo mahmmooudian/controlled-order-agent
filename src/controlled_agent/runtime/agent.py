@@ -372,9 +372,9 @@ class ControlledOrderAgent:
         The pending approval must match the exact
         WRITE context.
 
-        Approved authorizations are consumed before
-        WRITE execution so the same authorization
-        cannot be replayed.
+        An approved authorization remains unconsumed
+        until the Runtime reaches the protected WRITE
+        operation.
         """
 
         if self.approval_repository is None:
@@ -448,35 +448,6 @@ class ControlledOrderAgent:
                 ),
             )
 
-            if approved:
-                consumed = (
-                    self.approval_repository
-                    .consume(
-                        decided["approval_id"],
-                        run_id=(
-                            self.current_run_id
-                        ),
-                        action=action,
-                        order_id=state.order_id,
-                        context_hash=(
-                            context_hash
-                        ),
-                    )
-                )
-
-                self.audit.log(
-                    step=step,
-                    event=(
-                        "approval_record_consumed"
-                    ),
-                    detail=(
-                        "One-time WRITE "
-                        "authorization "
-                        f"{consumed['approval_id']} "
-                        "consumed."
-                    ),
-                )
-
             return True
 
         except Exception as exc:
@@ -484,6 +455,113 @@ class ControlledOrderAgent:
                 step=step,
                 event=(
                     "approval_decision_failed"
+                ),
+                detail=str(exc),
+            )
+
+            return False
+
+    def _consume_write_approval(
+        self,
+        state: AgentState,
+        *,
+        action: str,
+        step: int,
+    ) -> bool:
+        """
+        Consume the exact approved authorization
+        immediately before a protected WRITE action.
+
+        Security behavior is fail-closed when
+        approval persistence is enabled.
+        """
+
+        if self.approval_repository is None:
+            return True
+
+        if (
+            self.current_run_id is None
+            or state.order_id is None
+        ):
+            self.audit.log(
+                step=step,
+                event=(
+                    "approval_consumption_failed"
+                ),
+                detail=(
+                    "WRITE authorization consumption "
+                    "requires an active run_id "
+                    "and order_id."
+                ),
+            )
+
+            return False
+
+        context_hash = (
+            self._build_approval_context_hash(
+                state,
+                action=action,
+            )
+        )
+
+        try:
+            approved = (
+                self.approval_repository
+                .get_latest_approved_unconsumed(
+                    self.current_run_id,
+                    action=action,
+                    order_id=state.order_id,
+                    context_hash=context_hash,
+                )
+            )
+
+            if approved is None:
+                self.audit.log(
+                    step=step,
+                    event=(
+                        "approval_consumption_failed"
+                    ),
+                    detail=(
+                        "No approved unconsumed "
+                        "authorization matches the "
+                        "current WRITE context."
+                    ),
+                )
+
+                return False
+
+            consumed = (
+                self.approval_repository.consume(
+                    approved["approval_id"],
+                    run_id=(
+                        self.current_run_id
+                    ),
+                    action=action,
+                    order_id=state.order_id,
+                    context_hash=context_hash,
+                )
+            )
+
+            self.audit.log(
+                step=step,
+                event=(
+                    "approval_record_consumed"
+                ),
+                detail=(
+                    "One-time WRITE authorization "
+                    f"{consumed['approval_id']} "
+                    "consumed immediately before "
+                    "execution."
+                ),
+            )
+
+            return True
+
+        except Exception as exc:
+            self.audit.log(
+                step=step,
+                event=(
+                    "approval_consumption_failed"
                 ),
                 detail=str(exc),
             )
@@ -1234,6 +1312,41 @@ class ControlledOrderAgent:
                     f"Order delayed "
                     f"{state.days_delayed} days"
                 )
+
+                # --------------------------------------------
+                # CONSUME ONE-TIME WRITE AUTHORIZATION
+                # --------------------------------------------
+
+                approval_consumed = (
+                    self._consume_write_approval(
+                        state,
+                        action="create_ticket",
+                        step=state.steps,
+                    )
+                )
+
+                if not approval_consumed:
+                    self.audit.log(
+                        step=state.steps,
+                        event="write_blocked",
+                        detail=(
+                            "create_ticket blocked "
+                            "because no valid "
+                            "one-time approval "
+                            "authorization could "
+                            "be consumed."
+                        ),
+                    )
+
+                    return mark_failed(
+                        state,
+                        (
+                            "Approved WRITE "
+                            "authorization could not "
+                            "be validated or consumed "
+                            "safely."
+                        ),
+                    )
 
                 self.audit.log(
                     step=state.steps,

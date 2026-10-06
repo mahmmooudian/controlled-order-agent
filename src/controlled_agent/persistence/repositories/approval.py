@@ -497,6 +497,71 @@ class ApprovalRepository:
         )
 
     # ========================================================
+    # LATEST APPROVED / UNCONSUMED
+    # ========================================================
+
+    def get_latest_approved_unconsumed(
+        self,
+        run_id: str,
+        *,
+        action: str,
+        order_id: str,
+        context_hash: str,
+    ) -> dict | None:
+        """
+        Return the most recent approved WRITE authorization
+        that exactly matches one execution context and has
+        not yet been consumed.
+
+        This lookup is intentionally strict and is intended
+        for use immediately before a sensitive WRITE action.
+        """
+
+        self._validate_context(
+            order_id=order_id,
+            context_hash=context_hash,
+        )
+
+        with self.database.connect() as connection:
+
+            row = connection.execute(
+                """
+                SELECT
+                    approval_id,
+                    run_id,
+                    action,
+                    order_id,
+                    context_hash,
+                    approved,
+                    requested_at,
+                    decided_at,
+                    consumed_at
+                FROM approvals
+                WHERE run_id = ?
+                  AND action = ?
+                  AND order_id = ?
+                  AND context_hash = ?
+                  AND approved = 1
+                  AND consumed_at IS NULL
+                ORDER BY decided_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (
+                    run_id,
+                    action,
+                    order_id,
+                    context_hash,
+                ),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return self._row_to_dict(
+            row
+        )
+
+    # ========================================================
     # COUNT
     # ========================================================
 
