@@ -1,0 +1,56 @@
+name: Feature Request
+description: Suggest an improvement while preserving the project's control boundaries
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature proposals should preserve the core security principle:
+
+        Planner capability must not become execution authority.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: What problem would this feature solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the behavior or architecture you are proposing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and Authorization Impact
+      description: |
+        Does this change affect authentication, RBAC, approval,
+        policy enforcement, tool execution, persistence, or audit behavior?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative approaches you considered.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Design Checklist
+      options:
+        - label: This proposal does not intentionally bypass policy enforcement.
+          required: true
+        - label: Sensitive WRITE operations remain subject to authorization controls.
+          required: true
+        - label: I considered testing and evaluation requirements for this change.
+          required: true
