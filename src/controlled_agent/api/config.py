@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass
 
 
+# ============================================================
+# API SETTINGS
+# ============================================================
+
 @dataclass(frozen=True)
 class ApiSettings:
     app_name: str = (
@@ -18,8 +22,26 @@ class ApiSettings:
 
     allow_security_simulation: bool = False
 
+    # --------------------------------------------------------
+    # AUTHENTICATION / RBAC CREDENTIALS
+    # --------------------------------------------------------
+
+    # Backwards-compatible ADMIN credential.
     api_key: str | None = None
 
+    # Read-only access.
+    reader_api_key: str | None = None
+
+    # Agent execution / continuation access.
+    operator_api_key: str | None = None
+
+    # Human approval access.
+    approver_api_key: str | None = None
+
+
+# ============================================================
+# BOOLEAN PARSING
+# ============================================================
 
 def _parse_bool(
     value: str,
@@ -36,6 +58,10 @@ def _parse_bool(
         }
     )
 
+
+# ============================================================
+# LOG LEVEL
+# ============================================================
 
 def _resolve_log_level(
     value: str,
@@ -60,6 +86,10 @@ def _resolve_log_level(
     return normalized
 
 
+# ============================================================
+# OPTIONAL SECRET
+# ============================================================
+
 def _resolve_optional_secret(
     value: str,
 ) -> str | None:
@@ -71,6 +101,10 @@ def _resolve_optional_secret(
     return normalized
 
 
+# ============================================================
+# SETTINGS FACTORY
+# ============================================================
+
 def get_settings() -> ApiSettings:
     environment = (
         os.getenv(
@@ -80,6 +114,10 @@ def get_settings() -> ApiSettings:
         .strip()
         .lower()
     )
+
+    # --------------------------------------------------------
+    # DEBUG
+    # --------------------------------------------------------
 
     debug_requested = _parse_bool(
         os.getenv(
@@ -94,12 +132,20 @@ def get_settings() -> ApiSettings:
         and environment != "production"
     )
 
+    # --------------------------------------------------------
+    # LOGGING
+    # --------------------------------------------------------
+
     log_level = _resolve_log_level(
         os.getenv(
             "CONTROLLED_AGENT_LOG_LEVEL",
             "INFO",
         )
     )
+
+    # --------------------------------------------------------
+    # SECURITY SIMULATION
+    # --------------------------------------------------------
 
     simulation_requested = _parse_bool(
         os.getenv(
@@ -118,12 +164,53 @@ def get_settings() -> ApiSettings:
         and environment != "production"
     )
 
+    # --------------------------------------------------------
+    # ADMIN API KEY
+    # --------------------------------------------------------
+
     api_key = _resolve_optional_secret(
         os.getenv(
             "CONTROLLED_AGENT_API_KEY",
             "",
         )
     )
+
+    # --------------------------------------------------------
+    # READER API KEY
+    # --------------------------------------------------------
+
+    reader_api_key = _resolve_optional_secret(
+        os.getenv(
+            "CONTROLLED_AGENT_READER_API_KEY",
+            "",
+        )
+    )
+
+    # --------------------------------------------------------
+    # OPERATOR API KEY
+    # --------------------------------------------------------
+
+    operator_api_key = _resolve_optional_secret(
+        os.getenv(
+            "CONTROLLED_AGENT_OPERATOR_API_KEY",
+            "",
+        )
+    )
+
+    # --------------------------------------------------------
+    # APPROVER API KEY
+    # --------------------------------------------------------
+
+    approver_api_key = _resolve_optional_secret(
+        os.getenv(
+            "CONTROLLED_AGENT_APPROVER_API_KEY",
+            "",
+        )
+    )
+
+    # --------------------------------------------------------
+    # FINAL SETTINGS
+    # --------------------------------------------------------
 
     return ApiSettings(
         environment=environment,
@@ -133,4 +220,7 @@ def get_settings() -> ApiSettings:
             allow_security_simulation
         ),
         api_key=api_key,
+        reader_api_key=reader_api_key,
+        operator_api_key=operator_api_key,
+        approver_api_key=approver_api_key,
     )

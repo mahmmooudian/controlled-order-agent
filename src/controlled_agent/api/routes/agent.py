@@ -8,7 +8,10 @@ from fastapi import (
 )
 
 from controlled_agent.api.auth import (
-    require_api_key,
+    require_audit_reader,
+    require_run_approver,
+    require_run_operator,
+    require_run_reader,
 )
 from controlled_agent.api.config import (
     ApiSettings,
@@ -44,11 +47,6 @@ from controlled_agent.runtime import (
 router = APIRouter(
     prefix="/agent",
     tags=["agent"],
-    dependencies=[
-        Depends(
-            require_api_key
-        ),
-    ],
 )
 
 
@@ -138,6 +136,11 @@ def _load_run_or_404(
     status_code=(
         status.HTTP_201_CREATED
     ),
+    dependencies=[
+        Depends(
+            require_run_operator
+        ),
+    ],
 )
 def create_agent_run(
     request: CreateAgentRunRequest,
@@ -222,6 +225,11 @@ def create_agent_run(
 @router.get(
     "/runs/{run_id}",
     response_model=AgentRunResponse,
+    dependencies=[
+        Depends(
+            require_run_reader
+        ),
+    ],
 )
 def get_agent_run(
     run_id: str,
@@ -252,6 +260,11 @@ def get_agent_run(
 @router.post(
     "/runs/{run_id}/input",
     response_model=AgentRunResponse,
+    dependencies=[
+        Depends(
+            require_run_operator
+        ),
+    ],
 )
 def continue_agent_run(
     run_id: str,
@@ -306,6 +319,11 @@ def continue_agent_run(
 @router.post(
     "/runs/{run_id}/approval",
     response_model=AgentRunResponse,
+    dependencies=[
+        Depends(
+            require_run_approver
+        ),
+    ],
 )
 def decide_agent_approval(
     run_id: str,
@@ -363,6 +381,11 @@ def decide_agent_approval(
     "/runs/{run_id}/audit",
     response_model=list[
         AuditEventResponse
+    ],
+    dependencies=[
+        Depends(
+            require_audit_reader
+        ),
     ],
 )
 def get_agent_run_audit(
