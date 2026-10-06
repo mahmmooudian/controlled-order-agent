@@ -7,6 +7,9 @@ from fastapi import (
     status,
 )
 
+from controlled_agent.api.auth import (
+    require_api_key,
+)
 from controlled_agent.api.config import (
     ApiSettings,
     get_settings,
@@ -34,9 +37,18 @@ from controlled_agent.runtime import (
 )
 
 
+# ============================================================
+# ROUTER
+# ============================================================
+
 router = APIRouter(
     prefix="/agent",
     tags=["agent"],
+    dependencies=[
+        Depends(
+            require_api_key
+        ),
+    ],
 )
 
 
@@ -108,7 +120,9 @@ def _load_run_or_404(
             status_code=(
                 status.HTTP_404_NOT_FOUND
             ),
-            detail="Agent run not found.",
+            detail=(
+                "Agent run not found."
+            ),
         )
 
     return state
@@ -121,7 +135,9 @@ def _load_run_or_404(
 @router.post(
     "/runs",
     response_model=AgentRunResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=(
+        status.HTTP_201_CREATED
+    ),
 )
 def create_agent_run(
     request: CreateAgentRunRequest,
@@ -345,7 +361,9 @@ def decide_agent_approval(
 
 @router.get(
     "/runs/{run_id}/audit",
-    response_model=list[AuditEventResponse],
+    response_model=list[
+        AuditEventResponse
+    ],
 )
 def get_agent_run_audit(
     run_id: str,

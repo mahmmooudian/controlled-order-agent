@@ -18,6 +18,8 @@ class ApiSettings:
 
     allow_security_simulation: bool = False
 
+    api_key: str | None = None
+
 
 def _parse_bool(
     value: str,
@@ -54,6 +56,17 @@ def _resolve_log_level(
 
     if normalized not in allowed:
         return "INFO"
+
+    return normalized
+
+
+def _resolve_optional_secret(
+    value: str,
+) -> str | None:
+    normalized = value.strip()
+
+    if not normalized:
+        return None
 
     return normalized
 
@@ -105,6 +118,13 @@ def get_settings() -> ApiSettings:
         and environment != "production"
     )
 
+    api_key = _resolve_optional_secret(
+        os.getenv(
+            "CONTROLLED_AGENT_API_KEY",
+            "",
+        )
+    )
+
     return ApiSettings(
         environment=environment,
         debug=debug,
@@ -112,4 +132,5 @@ def get_settings() -> ApiSettings:
         allow_security_simulation=(
             allow_security_simulation
         ),
+        api_key=api_key,
     )

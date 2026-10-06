@@ -1587,6 +1587,10 @@ class ControlledAgentWindow(QMainWindow):
         simulate_lookup_injection: bool = False,
     ):
 
+        # ----------------------------------------------------
+        # API URL
+        # ----------------------------------------------------
+
         api_url = (
             os.getenv(
                 "CONTROLLED_AGENT_API_URL",
@@ -1600,9 +1604,28 @@ class ControlledAgentWindow(QMainWindow):
                 "http://127.0.0.1:8000"
             )
 
+        # ----------------------------------------------------
+        # API CREDENTIAL
+        # ----------------------------------------------------
+
+        raw_api_key = os.getenv(
+            "CONTROLLED_AGENT_API_KEY",
+            "",
+        )
+
+        api_key = (
+            raw_api_key.strip()
+            or None
+        )
+
+        # ----------------------------------------------------
+        # HTTP CLIENT
+        # ----------------------------------------------------
+
         client = ControlledAgentApiClient(
             base_url=api_url,
             timeout=3.0,
+            api_key=api_key,
         )
 
         try:
@@ -1617,6 +1640,10 @@ class ControlledAgentWindow(QMainWindow):
         except Exception:
             client.close()
             raise
+
+        # ----------------------------------------------------
+        # GUI ADAPTER
+        # ----------------------------------------------------
 
         agent = GuiAgentAdapter(
             client=client,

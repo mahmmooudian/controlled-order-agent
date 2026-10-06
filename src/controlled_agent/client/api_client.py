@@ -41,6 +41,12 @@ class ControlledAgentApiClient:
       gateway/service errors are retryable.
     - Connect/read/write/pool timeouts are configured
       independently.
+
+    Authentication policy:
+
+    - Agent API requests may carry a Bearer API key.
+    - Health and readiness requests remain public and
+      do not receive the Authorization header.
     """
 
     RETRYABLE_STATUS_CODES = {
@@ -67,6 +73,7 @@ class ControlledAgentApiClient:
         pool_timeout: float = 3.0,
         max_get_retries: int = 2,
         retry_backoff: float = 0.10,
+        api_key: str | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
 
@@ -90,6 +97,27 @@ class ControlledAgentApiClient:
             retry_backoff
         )
 
+        # ----------------------------------------------------
+        # API CREDENTIAL
+        # ----------------------------------------------------
+
+        if api_key is None:
+            self.api_key = None
+
+        else:
+            normalized_api_key = (
+                api_key.strip()
+            )
+
+            self.api_key = (
+                normalized_api_key
+                or None
+            )
+
+        # ----------------------------------------------------
+        # TIMEOUT CONFIGURATION
+        # ----------------------------------------------------
+
         if timeout is None:
             resolved_timeout = httpx.Timeout(
                 connect=connect_timeout,
@@ -97,11 +125,13 @@ class ControlledAgentApiClient:
                 write=write_timeout,
                 pool=pool_timeout,
             )
+
         elif isinstance(
             timeout,
             httpx.Timeout,
         ):
             resolved_timeout = timeout
+
         else:
             # Backwards compatibility for callers
             # that already pass timeout=3.0, etc.
@@ -114,6 +144,36 @@ class ControlledAgentApiClient:
             timeout=resolved_timeout,
             transport=transport,
         )
+
+    # ========================================================
+    # AUTHENTICATION
+    # ========================================================
+
+    def _build_headers(
+        self,
+        path: str,
+    ) -> dict[str, str]:
+        """
+        Build request headers.
+
+        Credentials are sent only to protected
+        Agent API routes. Public health/readiness
+        probes do not receive the API key.
+        """
+
+        if (
+            self.api_key is None
+            or not path.startswith(
+                "/agent/"
+            )
+        ):
+            return {}
+
+        return {
+            "Authorization": (
+                f"Bearer {self.api_key}"
+            ),
+        }
 
     # ========================================================
     # RETRY POLICY
@@ -201,6 +261,10 @@ class ControlledAgentApiClient:
             method.upper()
         )
 
+        headers = self._build_headers(
+            path
+        )
+
         attempt = 0
 
         while True:
@@ -210,6 +274,7 @@ class ControlledAgentApiClient:
                     normalized_method,
                     path,
                     json=json,
+                    headers=headers,
                 )
 
             except self.RETRYABLE_EXCEPTIONS as exc:

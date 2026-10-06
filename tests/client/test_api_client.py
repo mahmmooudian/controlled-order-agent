@@ -589,3 +589,87 @@ def test_get_timeout_is_retried_then_reported():
     assert attempts["count"] == 3
 
     client.close()
+# ============================================================
+# API AUTHENTICATION
+# ============================================================
+
+def test_api_client_sends_bearer_token_to_agent_routes():
+    observed = {
+        "authorization": None,
+    }
+
+    def handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+
+        observed["authorization"] = (
+            request.headers.get(
+                "Authorization"
+            )
+        )
+
+        return httpx.Response(
+            201,
+            json=RUN_RESPONSE,
+        )
+
+    client = ControlledAgentApiClient(
+        api_key="client-secret-key",
+        transport=httpx.MockTransport(
+            handler
+        ),
+    )
+
+    client.create_run(
+        "Check order 45821."
+    )
+
+    assert (
+        observed["authorization"]
+        == "Bearer client-secret-key"
+    )
+
+    client.close()
+
+
+def test_api_client_does_not_send_key_to_health():
+    observed = {
+        "authorization": None,
+    }
+
+    def handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+
+        observed["authorization"] = (
+            request.headers.get(
+                "Authorization"
+            )
+        )
+
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "service": (
+                    "controlled-order-agent"
+                ),
+                "version": "2.0.0.dev0",
+            },
+        )
+
+    client = ControlledAgentApiClient(
+        api_key="client-secret-key",
+        transport=httpx.MockTransport(
+            handler
+        ),
+    )
+
+    client.health()
+
+    assert (
+        observed["authorization"]
+        is None
+    )
+
+    client.close()
