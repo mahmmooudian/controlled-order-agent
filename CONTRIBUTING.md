@@ -2,19 +2,63 @@
 
 Thank you for your interest in contributing to the **Controlled Order Agent**.
 
-This project focuses on building agentic systems with explicit control boundaries, policy enforcement, human approval, persistent auditability, and security-oriented evaluation.
+This project focuses on building agentic systems in which planning capability is deliberately separated from execution authority.
 
-Contributions should preserve those principles.
+The repository emphasizes:
+
+- policy-controlled execution;
+- human approval for privileged actions;
+- context-bound authorization;
+- approval replay protection;
+- role-based access control;
+- persistent auditability;
+- structured validation;
+- bounded agent execution;
+- deterministic security evaluation;
+- optional LLM-backed planning without granting the model execution authority.
+
+Contributions should preserve these principles.
 
 ---
 
-## Development Philosophy
+## Core Architectural Principle
 
-The core architectural rule is:
+The central rule of the project is:
 
-> **The planner may propose an action, but it must never become the authority that authorizes a sensitive action.**
+> **Planner decision != authorization**
 
-Changes should preserve the separation between:
+A planner may propose what should happen next.
+
+It must not become the authority that determines whether a privileged action is allowed to execute.
+
+The intended control flow is:
+
+```text
+Planner
+    |
+    v
+Runtime
+    |
+    v
+Policy
+    |
+    v
+Validation
+    |
+    v
+Human Approval
+    |
+    v
+Authorization Context
+    |
+    v
+One-Time Approval Consumption
+    |
+    v
+WRITE Tool
+```
+
+Changes must preserve the separation between:
 
 ```text
 Planning
@@ -32,14 +76,26 @@ Sensitive WRITE operations must remain behind explicit policy and authorization 
 
 ---
 
-## Requirements
+## Supported Python Versions
 
-Supported Python versions:
+The project currently supports:
 
 ```text
 Python >= 3.10
 Python < 3.13
 ```
+
+The CI matrix validates:
+
+```text
+Python 3.10
+Python 3.11
+Python 3.12
+```
+
+---
+
+## Development Installation
 
 Install the project with development dependencies:
 
@@ -47,10 +103,22 @@ Install the project with development dependencies:
 python -m pip install -e ".[dev]"
 ```
 
+For development involving the optional OpenAI planner:
+
+```powershell
+python -m pip install -e ".[dev,llm]"
+```
+
 For GUI development:
 
 ```powershell
 python -m pip install -e ".[dev,gui]"
+```
+
+For the complete development environment:
+
+```powershell
+python -m pip install -e ".[dev,gui,llm]"
 ```
 
 ---
@@ -66,9 +134,13 @@ src/controlled_agent/
 Major areas include:
 
 ```text
+adapters/
 api/
+approvals/
 client/
+desktop/
 domain/
+observability/
 persistence/
 planners/
 policy/
@@ -78,44 +150,74 @@ services/
 tools/
 ```
 
-Tests live under:
+Automated tests live under:
 
 ```text
 tests/
 ```
 
-Production-style evaluation lives under:
+The deterministic evaluation framework lives under:
 
 ```text
 evals/
 ```
 
-The historical v1 demonstration is preserved in Git history under:
+Technical documentation lives under:
+
+```text
+docs/
+```
+
+The original demonstration implementation is preserved in Git history under:
 
 ```text
 v1.0-demo
 ```
 
-New development should target the current `src/controlled_agent` architecture.
+New development should target the current:
+
+```text
+src/controlled_agent/
+```
+
+architecture.
 
 ---
 
-## Creating a Development Branch
+## Protected Main Branch
+
+The `main` branch is protected.
+
+Changes should be introduced through a dedicated branch and merged through a pull request after required checks pass.
+
+Direct pushes to `main` are intentionally restricted.
+
+For repository maintainers:
+
+```powershell
+git switch main
+git pull --ff-only origin main
+git switch -c feat/example-change
+```
+
+External contributors should normally fork the repository, create a branch in their fork, and open a pull request against `main`.
+
+---
+
+## Branch Naming
 
 Create a dedicated branch for each meaningful change.
 
-Examples:
+Recommended examples:
 
-```powershell
-git switch -c feat/add-new-tool
-```
-
-```powershell
-git switch -c fix/approval-validation
-```
-
-```powershell
-git switch -c docs/improve-security-guide
+```text
+feat/add-new-tool
+fix/approval-validation
+security/harden-authentication
+test/add-replay-regression
+docs/improve-security-guide
+refactor/runtime-dependencies
+chore/update-tooling
 ```
 
 Recommended prefixes:
@@ -130,45 +232,48 @@ refactor/
 chore/
 ```
 
+Keep branches focused on one logical change.
+
 ---
 
 ## Coding Guidelines
 
-Keep changes focused and easy to review.
+Prefer code that is:
+
+```text
+Explicit
+Structured
+Typed where practical
+Testable
+Auditable
+Deterministic where security behavior is involved
+Fail-closed for sensitive decisions
+Separated by responsibility
+```
 
 Prefer:
 
 ```text
-Explicit behavior
-
-Small components
-
-Typed interfaces
-
 Structured schemas
-
 Dependency injection
-
-Deterministic tests
-
-Fail-closed security behavior
-
-Clear separation of responsibilities
+Small components
+Clear interfaces
+Explicit authorization decisions
+Explicit error handling
 ```
 
-Avoid introducing hidden coupling between:
+Avoid hidden coupling between:
 
 ```text
 planner logic
-
 policy decisions
-
 authorization
-
+approval state
 tool execution
+persistence
 ```
 
-A planner should never directly bypass the runtime or policy layer to execute a privileged tool.
+A planner must never bypass the runtime or policy layer to execute a privileged tool directly.
 
 ---
 
@@ -180,46 +285,42 @@ Security-sensitive areas include:
 
 ```text
 Authentication
-
 RBAC
-
 Approval handling
-
 Approval persistence
-
 Approval consumption
-
 Policy enforcement
-
 WRITE tools
-
 Tool validation
-
 Retry behavior
-
 Secret handling
-
 Audit logging
+LLM boundaries
+Runtime configuration
 ```
 
-A change must not weaken these invariants:
+The following invariants must remain true:
 
 ```text
 Planner decision != authorization
 
 Sensitive WRITE requires policy authorization
 
-Sensitive WRITE requires explicit approval
+Sensitive WRITE requires explicit human approval
 
-Approval must match execution context
+Approval must match the execution context
 
 Approval must be one-time use
 
+Consumed approval cannot authorize another WRITE
+
 Untrusted tool output cannot authorize WRITE
+
+LLM output cannot authorize WRITE by itself
 
 Execution must remain bounded
 
-Security failures should fail closed
+Security-sensitive failures should fail closed
 ```
 
 See:
@@ -228,13 +329,85 @@ See:
 docs/security.md
 ```
 
-for the complete security architecture.
+for the detailed security architecture.
+
+---
+
+## Authentication and RBAC
+
+The API implements bearer authentication and role-based authorization.
+
+Current roles include:
+
+```text
+reader
+operator
+approver
+admin
+```
+
+Changes to authentication or authorization must preserve least-privilege behavior.
+
+Relevant tests should cover cases such as:
+
+```text
+missing credentials
+
+invalid credentials
+
+valid credentials
+
+insufficient role
+
+authorized role
+
+production fail-closed behavior
+```
+
+Do not weaken authorization solely to simplify testing or development.
+
+---
+
+## Human Approval
+
+Human approval is a security boundary.
+
+Approval must not be represented as an unrestricted global permission.
+
+Authorization is bound to execution context including information such as:
+
+```text
+run_id
+action
+order_id
+context_hash
+```
+
+Approved authorization is consumed before a privileged WRITE executes.
+
+A previously consumed approval must not authorize another WRITE.
+
+Changes to approval behavior should include regression tests covering:
+
+```text
+valid approval
+
+missing approval
+
+denied approval
+
+mismatched context
+
+approval replay
+
+approval consumption failure
+```
 
 ---
 
 ## Secrets
 
-Never commit real credentials.
+Never commit real credentials or secrets.
 
 Do not commit:
 
@@ -242,6 +415,8 @@ Do not commit:
 .env
 
 API keys
+
+Bearer credentials
 
 access tokens
 
@@ -260,27 +435,190 @@ Use:
 .env.example
 ```
 
-only for configuration examples.
+for configuration examples.
+
+The repository also uses GitHub secret scanning and push protection where available.
+
+These controls are additional safeguards and are not a substitute for careful secret handling.
+
+---
+
+## Planner Architecture
+
+The project currently contains two planner implementations:
+
+```text
+BasePlanner
+    |
+    +-- RuleBasedPlanner
+    |
+    +-- LLMPlanner
+```
+
+Both use the same planning abstraction.
+
+Neither planner owns the authorization boundary.
+
+---
+
+## RuleBasedPlanner
+
+`RuleBasedPlanner` is the deterministic reference planner.
+
+It is used for:
+
+```text
+offline execution
+
+stable regression testing
+
+deterministic CI validation
+
+production-style evaluation
+
+security evaluation
+```
+
+The documented deterministic evaluation baseline uses `RuleBasedPlanner`.
+
+---
+
+## Optional OpenAI LLMPlanner
+
+The repository also includes an optional OpenAI-backed planner:
+
+```text
+src/controlled_agent/planners/llm.py
+```
+
+The `LLMPlanner`:
+
+```text
+produces structured AgentDecision output
+
+receives a restricted operational state
+
+does not execute tools directly
+
+does not own approval
+
+does not bypass policy
+
+does not receive unrestricted runtime authority
+```
+
+The OpenAI integration is optional.
+
+It is not required for deterministic production-style evaluation.
+
+Its dedicated unit tests use mocked OpenAI behavior.
+
+They do not prove successful live OpenAI API execution.
+
+---
+
+## Adding a New Planner
+
+New planners should implement the existing planner abstraction.
+
+A planner may propose actions.
+
+It must not directly:
+
+```text
+execute privileged tools
+
+override policy decisions
+
+approve its own actions
+
+consume approvals
+
+modify authorization state
+
+bypass validation
+
+receive unnecessary application secrets
+```
+
+This requirement applies equally to:
+
+```text
+rule-based planners
+
+machine-learning planners
+
+LLM planners
+
+external agent frameworks
+```
+
+Planner capability must remain separate from execution authority.
 
 ---
 
 ## Tests
 
-Every behavioral change should include or update automated tests.
+Every meaningful behavioral change should include or update automated tests.
 
-Run the complete regression suite before submitting changes:
+Run the complete regression suite with:
 
 ```powershell
 pytest -q
 ```
 
-Current validated baseline:
+The currently validated full regression baseline, with optional LLM dependencies installed, is:
 
 ```text
-199 passed
+205 passed
 ```
 
-A contribution should not intentionally reduce test coverage of security-critical behavior.
+To reproduce the full baseline:
+
+```powershell
+python -m pip install -e ".[dev,llm]"
+pytest -q
+```
+
+The exact number of tests may increase as new regression coverage is added.
+
+A contribution must not intentionally remove security-critical coverage without a documented reason.
+
+---
+
+## Optional LLMPlanner Tests
+
+Dedicated LLM planner tests can be run with:
+
+```powershell
+pytest tests/unit/test_llm_planner.py -q
+```
+
+The currently validated result is:
+
+```text
+6 passed
+```
+
+These tests use mocked OpenAI behavior.
+
+They cover areas including:
+
+```text
+required OpenAI configuration
+
+client initialization
+
+restricted state projection
+
+structured AgentDecision parsing
+
+missing structured output handling
+
+credential exclusion from model payload
+```
+
+They do not perform live OpenAI API validation.
 
 ---
 
@@ -288,52 +626,86 @@ A contribution should not intentionally reduce test coverage of security-critica
 
 During development, targeted tests may be run first.
 
-Example:
+Examples:
 
 ```powershell
-pytest tests\unit -q
+pytest tests/unit -q
 ```
-
-or:
 
 ```powershell
-pytest tests\api -q
+pytest tests/api -q
 ```
 
-However, the complete suite must still pass before the change is considered ready.
+```powershell
+pytest tests/security -q
+```
+
+```powershell
+pytest tests/integration -q
+```
+
+Targeted tests are useful during development, but the relevant full regression suite should pass before merge.
 
 ---
 
-## Production-Style Evaluation
+## Deterministic Evaluation
 
-Changes affecting agent behavior must also pass the evaluation suite:
+Changes affecting agent behavior must also pass the production-style evaluation suite:
 
 ```powershell
 python -m evals.run_evals
 ```
 
-The expected final result is:
+The current validated baseline is:
 
 ```text
+Total Cases: 10
+Passed Scenarios: 10
+Scenario Pass Rate: 100.00%
+
+Correct Tool Selections: 10
+Tool Selection Accuracy: 100.00%
+
+Unwanted Actions: 0
+Unwanted Action Rate: 0.00%
+
+Approval Enforcement Rate: 100.00%
+Unsafe Write Block Rate: 100.00%
+Approval Replay Block Rate: 100.00%
+
 Overall Evaluation: PASS
 ```
 
-The current evaluation includes checks for:
+The evaluator currently covers scenarios including:
 
 ```text
-Tool selection
+delayed order approved
 
-Approval enforcement
+delayed order denied
 
-Unsafe WRITE blocking
+delayed order waiting for approval
 
-Approval replay protection
+small delay
 
-Unwanted actions
+no delay
 
-Tool-output injection
+order not found
 
-Transient timeout recovery
+missing order ID
+
+invalid order ID
+
+tool-output injection
+
+transient timeout recovery
+```
+
+Dedicated security probes additionally validate:
+
+```text
+unsafe WRITE blocking
+
+approval replay prevention
 ```
 
 See:
@@ -342,19 +714,19 @@ See:
 docs/evaluation.md
 ```
 
-for full evaluation documentation.
+for complete evaluation documentation.
 
 ---
 
 ## Machine-Readable Evaluation
 
-The evaluation runner also supports JSON output:
+The evaluation runner supports JSON output:
 
 ```powershell
 python -m evals.run_evals --json
 ```
 
-or:
+A machine-readable report can also be written to disk:
 
 ```powershell
 python -m evals.run_evals `
@@ -362,6 +734,8 @@ python -m evals.run_evals `
 ```
 
 Evaluation failures return a non-zero process exit code.
+
+This allows the evaluator to act as a CI quality gate.
 
 ---
 
@@ -373,26 +747,118 @@ Before committing changes, run:
 git diff --check
 ```
 
-This detects common whitespace problems.
-
-For modified Python files, syntax validation can also be performed with:
+For modified Python files, syntax validation may also be useful:
 
 ```powershell
 python -m py_compile path\to\file.py
 ```
 
+For broader source validation:
+
+```powershell
+python -m compileall -q src evals
+```
+
+For the desktop entry point:
+
+```powershell
+python -m py_compile gui_qt.py
+```
+
+---
+
+## Continuous Integration
+
+GitHub Actions validates pull requests and protected-branch changes.
+
+The primary CI workflow is defined in:
+
+```text
+.github/workflows/ci.yml
+```
+
+It includes:
+
+```text
+Core tests on Python 3.10
+
+Core tests on Python 3.11
+
+Core tests on Python 3.12
+
+Optional OpenAI planner tests
+
+Production-style deterministic evaluation
+```
+
+Required checks should pass before a pull request is merged.
+
+Do not disable or bypass CI checks solely to merge a failing change.
+
+---
+
+## CodeQL
+
+The repository uses GitHub CodeQL for static security analysis.
+
+The workflow is defined in:
+
+```text
+.github/workflows/codeql.yml
+```
+
+CodeQL analyzes the Python codebase through GitHub Actions.
+
+Security findings should be investigated rather than bypassed solely to make a workflow green.
+
+---
+
+## Dependabot
+
+Dependency update configuration is defined in:
+
+```text
+.github/dependabot.yml
+```
+
+Dependabot monitors:
+
+```text
+Python dependencies
+
+GitHub Actions dependencies
+```
+
+Dependency updates are proposed through pull requests so they can pass through the same protected review and CI process as other changes.
+
+Dependency updates should still be reviewed for:
+
+```text
+compatibility
+
+security impact
+
+behavioral changes
+
+breaking changes
+```
+
+before merge.
+
 ---
 
 ## Documentation Changes
 
-Documentation should remain consistent with the actual implementation.
+Documentation must remain consistent with the actual implementation.
 
-Do not document features as implemented unless they are present and tested.
+Do not document a feature as implemented unless it exists in the repository.
 
-In particular, distinguish between:
+Distinguish clearly between:
 
 ```text
 Current implementation
+
+Optional implementation
 
 Future work
 
@@ -401,21 +867,25 @@ Production-oriented architecture
 Fully deployed production infrastructure
 ```
 
-The project currently uses:
+The current repository includes both:
 
 ```text
 RuleBasedPlanner
+
+LLMPlanner
 ```
 
-as its active deterministic planner.
+`RuleBasedPlanner` remains the deterministic reference planner used for the documented production-style evaluation.
 
-External LLM integration is an optional future extension and should not be presented as a required active runtime dependency.
+`LLMPlanner` is an implemented optional OpenAI-backed planner.
+
+The LLM integration must not be described as mandatory runtime infrastructure.
 
 ---
 
 ## Commit Messages
 
-Use clear, descriptive commit messages.
+Use clear and descriptive commit messages.
 
 Recommended style:
 
@@ -432,7 +902,7 @@ docs: document evaluation architecture
 
 refactor: separate API dependency construction
 
-chore: clean legacy project files
+chore: update development tooling
 ```
 
 Prefer one logical change per commit.
@@ -441,29 +911,35 @@ Prefer one logical change per commit.
 
 ## Pull Requests
 
-A contribution should be ready for review before opening a pull request.
-
-The change should:
+The repository uses a pull request template located at:
 
 ```text
-Have a clear purpose
-
-Preserve architectural boundaries
-
-Include relevant tests
-
-Pass the complete test suite
-
-Pass security evaluation when applicable
-
-Pass git diff --check
-
-Avoid secrets and generated runtime data
-
-Update documentation when behavior changes
+.github/pull_request_template.md
 ```
 
-Explain security implications when modifying:
+Pull requests should explain what changed and why.
+
+A pull request should:
+
+```text
+have a clear purpose
+
+preserve architectural boundaries
+
+include relevant tests
+
+pass required CI checks
+
+pass security evaluation when applicable
+
+pass git diff --check
+
+avoid secrets and generated runtime data
+
+update documentation when behavior changes
+```
+
+Security implications should be explained when modifying:
 
 ```text
 authentication
@@ -475,13 +951,35 @@ approval
 policy
 
 WRITE execution
+
+persistence
+
+audit behavior
+
+LLM boundaries
 ```
+
+---
+
+## Issue Reports
+
+Structured issue forms are available under:
+
+```text
+.github/ISSUE_TEMPLATE/
+```
+
+Use the bug-report form for reproducible defects.
+
+Use the feature-request form for proposed improvements.
+
+Do not publish sensitive vulnerability details through ordinary public issues.
 
 ---
 
 ## Adding a New Tool
 
-New tools should be classified explicitly as:
+New tools should be explicitly classified as:
 
 ```text
 READ
@@ -495,9 +993,9 @@ WRITE
 
 A READ tool must still validate untrusted external output.
 
-A WRITE tool must not be executed solely because a planner requested it.
+A WRITE tool must not execute solely because a planner requested it.
 
-Sensitive WRITE tools should pass through:
+Sensitive WRITE tools should pass through the controlled execution path:
 
 ```text
 Planner
@@ -515,35 +1013,16 @@ Validation
 Human Approval
     |
     v
-Authorization
+Authorization Context
+    |
+    v
+Approval Consumption
     |
     v
 WRITE Tool
 ```
 
-Tests should verify both allowed and blocked execution paths.
-
----
-
-## Adding a New Planner
-
-New planners should implement the existing planner abstraction.
-
-The planner must only propose actions.
-
-It must not directly:
-
-```text
-access approval storage
-
-override policy
-
-execute privileged tools
-
-modify authorization state
-```
-
-This requirement applies equally to deterministic, machine-learning, or LLM-based planners.
+Tests should cover both allowed and blocked execution paths.
 
 ---
 
@@ -552,32 +1031,54 @@ This requirement applies equally to deterministic, machine-learning, or LLM-base
 New evaluation scenarios should define:
 
 ```text
-Input
+input
 
-Expected tools
+expected tools
 
-Expected WRITE behavior
+expected WRITE behavior
 
-Expected final status
+expected final status
 
-Expected approval state
+expected approval state
 
-Security expectation
+security expectation
 ```
 
-Evaluation scenarios should be deterministic whenever possible.
+Evaluation scenarios should remain deterministic whenever possible.
+
+Security-sensitive behavior should include both positive and negative test cases.
 
 ---
 
 ## Reporting Security Issues
 
-Do not report sensitive vulnerabilities through public issues.
+Do not report sensitive vulnerabilities through public GitHub issues.
 
-Follow the repository security policy:
+Use the repository's private vulnerability reporting mechanism when available.
+
+Also review:
 
 ```text
 SECURITY.md
 ```
+
+for the repository security policy.
+
+Do not include:
+
+```text
+real credentials
+
+private tokens
+
+sensitive databases
+
+working secrets
+
+unredacted private user data
+```
+
+in issues, pull requests, logs, or reports.
 
 ---
 
@@ -590,7 +1091,7 @@ Implementation is complete
 
 Relevant tests exist
 
-pytest -q passes
+Required tests pass
 
 Evaluation passes when agent behavior is affected
 
@@ -601,12 +1102,22 @@ No secrets are included
 Documentation reflects actual behavior
 
 Security boundaries remain intact
+
+Required GitHub checks pass
+
+The pull request is ready for protected-main merge
 ```
 
 ---
 
 ## License and Contribution Terms
 
-By contributing to this repository, you confirm that you have the right to submit the contributed work under the repository's selected license.
+By contributing to this repository, you confirm that you have the right to submit the contributed work under the repository license.
 
-The final repository license is defined by the root-level `LICENSE` file.
+The repository license is defined in:
+
+```text
+LICENSE
+```
+
+Contributions accepted into the repository are expected to be compatible with those license terms.
