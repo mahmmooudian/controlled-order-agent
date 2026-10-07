@@ -1,374 +1,141 @@
+<div align="center">
+
 # Controlled Order Agent
 
-[![CI](https://github.com/mahmmooudian/controlled-order-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mahmmooudian/controlled-order-agent/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/mahmmooudian/controlled-order-agent?display_name=tag)](https://github.com/mahmmooudian/controlled-order-agent/releases/latest)
-![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue)
-![Tests](https://img.shields.io/badge/tests-205%20passed-brightgreen)
-![Evaluation](https://img.shields.io/badge/evaluation-10%2F10%20PASS-brightgreen)
+### Governed Tool-Using AI Agent for Order Support & Controlled Actions
 
-A **policy-controlled AI agent** for safe order operations with human approval, persistent audit trails, role-based access control, FastAPI, SQLite, deterministic security evaluation, and optional OpenAI-backed planning.
+**Agentic AI · Tool Calling · Human-in-the-Loop · Idempotency · Auditability · Reliability Engineering**
+
+A controlled AI-agent architecture for handling **order-support workflows** while keeping consequential actions behind deterministic execution boundaries, approval gates, reliability controls, and auditable tool calls.
+
+[Overview](#overview) ·
+[Architecture](#high-level-architecture) ·
+[Tool Model](#tool-model) ·
+[Approval](#human-in-the-loop-approval) ·
+[Reliability](#reliability-controls) ·
+[Security](#security--control-principles) ·
+[Limitations](#limitations)
+
+</div>
 
 ---
 
 ## Overview
 
-The **Controlled Order Agent** is a production-oriented reference implementation for building agentic systems in which planning capability is deliberately separated from execution authority.
+**Controlled Order Agent** demonstrates how a tool-using AI agent can assist with customer-order workflows without giving the language model unrestricted operational authority.
 
-The core architectural rule is:
+The central design principle is simple:
 
-> **Planner decision != authorization**
+> **The model may propose an action, but the runtime decides whether that action is allowed to execute.**
 
-A planner may propose an action, but it does not directly control sensitive tools.
+The project separates:
 
-Privileged WRITE operations must pass through independent runtime controls including:
+- Language-model reasoning
+- Tool selection
+- Policy enforcement
+- Human approval
+- Tool execution
+- Reliability controls
+- Audit logging
 
-```text
-Planner
-   |
-   v
-Agent Runtime
-   |
-   v
-Policy
-   |
-   v
-Validation
-   |
-   v
-Human Approval
-   |
-   v
-Authorization Context
-   |
-   v
-One-Time Approval Consumption
-   |
-   v
-WRITE Tool
-```
+This architecture turns a simple order-support agent into a demonstration of **bounded agent autonomy**.
 
-This architecture allows agent intelligence to evolve without giving the planner unrestricted authority.
+The current workflow centers on two representative tools:
+
+- `lookup_order` — read-only order retrieval
+- `create_ticket` — state-changing support action
+
+Read operations can be executed through a controlled tool boundary, while write operations can require explicit human approval before execution.
 
 ---
 
-## Why This Project Exists
+## Why Controlled Agents?
 
-Many agent demos combine planning and execution into the same trust boundary.
-
-That architecture can become dangerous when an agent has access to operations that modify persistent state.
-
-This project explores a different design:
+A basic tool-calling agent often follows this pattern:
 
 ```text
-Planning capability
-        !=
-Execution authority
+User Request
+     ↓
+LLM
+     ↓
+Tool Call
+     ↓
+Execution
 ```
 
-The agent can reason about what should happen next while sensitive actions remain governed by explicit application-level security controls.
+That architecture is easy to build, but it gives the model too much implicit authority.
 
-The current example domain is order support, but the same pattern can be applied to systems such as:
+A production-oriented agent requires additional control layers:
 
-- customer-support agents;
-- internal operations assistants;
-- finance workflows;
-- approval systems;
-- infrastructure agents;
-- enterprise automation;
-- AI-assisted administrative tools.
+```text
+Reason
+   ↓
+Propose
+   ↓
+Validate
+   ↓
+Authorize
+   ↓
+Execute
+   ↓
+Verify
+   ↓
+Record
+```
+
+Controlled Order Agent demonstrates this second pattern.
+
+The goal is not maximum autonomy.
+
+The goal is **useful autonomy inside explicit engineering boundaries**.
 
 ---
 
-# Key Features
-
-## Policy-Controlled Agent Runtime
-
-Planner output is treated as a proposal.
-
-The runtime independently determines whether that proposal may proceed.
-
-Sensitive operations are never authorized solely because a planner requested them.
-
----
-
-## Human-in-the-Loop Approval
-
-Sensitive WRITE operations require explicit human approval.
-
-For example:
-
-```text
-Order delayed > 3 days
-        |
-        v
-Ticket creation proposed
-        |
-        v
-WAITING_FOR_APPROVAL
-        |
-        v
-Human decision
-```
-
-No ticket is created before authorization is satisfied.
-
----
-
-## Context-Bound Approval
-
-Approval is not treated as a global boolean permission.
-
-Authorization is bound to execution context including:
-
-```text
-run_id
-action
-order_id
-context_hash
-```
-
-An approval for one order cannot automatically authorize the same action for another order.
-
----
-
-## Approval Replay Protection
-
-Approved authorization is one-time use.
-
-Immediately before a privileged WRITE, the runtime:
-
-```text
-finds matching approval
-        |
-        v
-verifies context
-        |
-        v
-verifies unconsumed state
-        |
-        v
-atomically consumes approval
-        |
-        v
-executes WRITE
-```
-
-A consumed approval cannot authorize another WRITE.
-
----
-
-## Role-Based Access Control
-
-The API implements role-based authorization.
-
-Supported roles:
-
-```text
-reader
-operator
-approver
-admin
-```
-
-Example access model:
-
-| Operation | Reader | Operator | Approver | Admin |
-|---|:---:|:---:|:---:|:---:|
-| Create agent run | No | Yes | No | Yes |
-| Read agent run | Yes | Yes | Yes | Yes |
-| Continue agent run | No | Yes | No | Yes |
-| Approve sensitive action | No | No | Yes | Yes |
-| Read audit trace | Yes | No | No | Yes |
-
-This separates ordinary operation from approval authority.
-
----
-
-## Persistent Audit Trail
-
-Security-relevant and operational events can be persisted.
-
-Representative events include:
-
-```text
-request_received
-planner_decision
-policy_check
-lookup_order_called
-tool_output_validated
-approval_requested
-approval_received
-approval_record_consumed
-write_blocked
-create_ticket_called
-ticket_created
-```
-
-The audit layer records operational behavior rather than hidden chain-of-thought.
-
----
-
-## Structured Validation
-
-Pydantic schemas are used at important trust boundaries.
-
-Examples include:
-
-```text
-API requests
-planner decisions
-order identifiers
-tool output
-approval requests
-ticket operations
-```
-
-External tool output is treated as untrusted data.
-
-Unexpected content is not interpreted as authority.
-
----
-
-## Safe Retry Behavior
-
-Retry policy depends on operation semantics.
-
-Read-only requests may retry selected transient failures.
-
-State-changing HTTP operations are not blindly replayed.
-
-```text
-GET
- -> limited retry allowed
-
-POST
- -> no automatic generic retry
-```
-
-This reduces the risk of duplicate side effects.
-
----
-
-## Bounded Agent Execution
-
-The agent cannot continue indefinitely.
-
-Current execution budget:
-
-```text
-MAX_STEPS = 4
-```
-
-Execution that exceeds its allowed budget is escalated rather than continuing without limit.
-
----
-
-# Planner Architecture
-
-The project currently contains two planner implementations.
-
-```text
-BasePlanner
-   |
-   +-- RuleBasedPlanner
-   |
-   +-- LLMPlanner
-```
-
-Both implement the same planning abstraction.
-
-Neither planner directly owns the security boundary.
-
----
-
-## RuleBasedPlanner
-
-`RuleBasedPlanner` is the deterministic reference planner.
-
-It is used for:
-
-- offline execution;
-- reproducible testing;
-- security evaluation;
-- stable regression scenarios;
-- deterministic CI validation.
-
-The documented production-style evaluation baseline uses this planner.
-
----
-
-## Optional OpenAI LLMPlanner
-
-The repository also includes an optional OpenAI-backed `LLMPlanner`.
-
-Location:
-
-```text
-src/controlled_agent/planners/llm.py
-```
-
-The LLM planner:
-
-- proposes the next `AgentDecision`;
-- uses structured response parsing;
-- receives a restricted operational state;
-- does not execute tools directly;
-- does not control approval;
-- does not bypass policy;
-- does not receive unrestricted runtime authority.
-
-Conceptually:
-
-```text
-OpenAI
-   |
-   v
-LLMPlanner
-   |
-   v
-AgentDecision
-   |
-   v
-Controlled Runtime
-   |
-   v
-Policy / Approval / Authorization
-```
-
-The OpenAI integration is optional and is not required for deterministic evaluation.
-
----
-
-# LLM Security Boundary
-
-The optional LLM planner intentionally receives only selected operational state.
-
-Representative fields include:
-
-```text
-user_message
-order_id
-order_status
-days_delayed
-awaiting_approval
-human_approved
-ticket_id
-steps
-status
-```
-
-It is not intentionally given application secrets such as:
-
-```text
-Bearer credentials
-API authorization headers
-database connections
-approval repository objects
-private keys
-runtime service objects
-```
-
-LLM output remains a planning proposal rather than an authorization decision.
+## Key Capabilities
+
+### Agentic Reasoning
+
+- Natural-language request interpretation
+- Tool selection
+- Structured tool arguments
+- Multi-step task handling
+- Tool-result reasoning
+- Controlled response generation
+
+### Tool Governance
+
+- Explicit tool allowlist
+- Read vs. write action separation
+- Parameter validation
+- Policy checks before execution
+- Least-privilege tool access
+- Controlled execution boundary
+
+### Human Oversight
+
+- Human-in-the-loop approval for consequential actions
+- Approval before state-changing execution
+- Rejection path
+- Safe cancellation
+- Separation between model intent and execution authority
+
+### Reliability
+
+- Bounded retry behavior
+- Timeout handling
+- Idempotency protection
+- Duplicate-action prevention
+- Structured failure handling
+- Controlled fallback behavior
+
+### Auditability
+
+- Tool-call logging
+- Action parameters
+- Approval decisions
+- Execution outcome
+- Failure information
+- Traceable agent workflow
 
 ---
 
@@ -376,932 +143,698 @@ LLM output remains a planning proposal rather than an authorization decision.
 
 ```mermaid
 flowchart TD
+    A[User Request] --> B[AI Agent]
 
-    USER[User / Desktop Client]
+    B --> C[Intent & Context Analysis]
+    C --> D[Tool Proposal]
 
-    API[FastAPI API]
+    D --> E[Tool Policy Layer]
 
-    AUTH[Authentication + RBAC]
+    E --> F{Action Type}
 
-    RUNTIME[ControlledOrderAgent]
+    F -- Read Only --> G[Parameter Validation]
+    F -- State Changing --> H[Human Approval Gate]
 
-    PLANNER[Planner Interface]
+    H --> I{Approved?}
 
-    RULE[RuleBasedPlanner]
+    I -- No --> J[Reject / Cancel Action]
+    I -- Yes --> G
 
-    LLM[Optional LLMPlanner]
+    G --> K[Controlled Tool Executor]
 
-    POLICY[Policy Layer]
+    K --> L1[lookup_order]
+    K --> L2[create_ticket]
 
-    VALIDATION[Structured Validation]
+    L1 --> M[Tool Result]
+    L2 --> M
 
-    READ[lookup_order - READ]
+    M --> N[Agent Response]
 
-    APPROVAL[Human Approval]
-
-    CONTEXT[Approval Context Validation]
-
-    CONSUME[One-Time Approval Consumption]
-
-    WRITE[create_ticket - WRITE]
-
-    DB[(SQLite Persistence)]
-
-    AUDIT[(Audit Events)]
-
-    USER --> API
-    API --> AUTH
-    AUTH --> RUNTIME
-
-    RUNTIME --> PLANNER
-    PLANNER --> RULE
-    PLANNER --> LLM
-
-    RULE --> RUNTIME
-    LLM --> RUNTIME
-
-    RUNTIME --> POLICY
-    POLICY --> VALIDATION
-
-    VALIDATION --> READ
-
-    POLICY --> APPROVAL
-    APPROVAL --> CONTEXT
-    CONTEXT --> CONSUME
-    CONSUME --> WRITE
-
-    RUNTIME --> DB
-    WRITE --> DB
-    RUNTIME --> AUDIT
+    D --> O[Audit Log]
+    E --> O
+    H --> O
+    K --> O
+    M --> O
 ```
+
+The language model never directly performs external side effects.
+
+It proposes a structured action, while deterministic application logic controls whether that action is permitted and executed.
 
 ---
 
-# Technology Stack
+## Execution Model
 
-The current implementation uses:
+The controlled execution lifecycle follows:
 
-| Area | Technology |
+```mermaid
+flowchart LR
+    A[User Goal] --> B[Agent Reasoning]
+    B --> C[Structured Tool Request]
+    C --> D[Validate]
+    D --> E[Authorize]
+    E --> F[Execute]
+    F --> G[Observe Result]
+    G --> H[Generate Response]
+    H --> I[Record Trace]
+```
+
+Each stage has a different responsibility.
+
+| Stage | Responsibility |
 |---|---|
-| Language | Python 3.10–3.12 |
-| API | FastAPI |
-| Validation | Pydantic |
-| Persistence | SQLite |
-| HTTP Client | HTTPX |
-| API Server | Uvicorn |
-| Desktop GUI | PySide6 |
-| Testing | pytest |
-| LLM Integration | OpenAI Python SDK |
-| CI | GitHub Actions |
+| **Reason** | Interpret the user request |
+| **Propose** | Select a tool and structured arguments |
+| **Validate** | Verify tool and parameter correctness |
+| **Authorize** | Apply policy and approval requirements |
+| **Execute** | Run permitted tool action |
+| **Observe** | Capture result or failure |
+| **Respond** | Generate user-facing answer |
+| **Record** | Preserve execution evidence |
+
+This separation reduces the amount of authority delegated directly to the model.
 
 ---
 
-# Repository Structure
+# Tool Model
 
-```text
-controlled-order-agent/
-│
-├── .github/
-│   └── workflows/
-│       └── ci.yml
-│
-├── docs/
-│   ├── architecture.md
-│   ├── security.md
-│   └── evaluation.md
-│
-├── evals/
-│   └── run_evals.py
-│
-├── src/
-│   └── controlled_agent/
-│       ├── api/
-│       ├── domain/
-│       ├── planners/
-│       ├── persistence/
-│       ├── services/
-│       ├── tools/
-│       └── ...
-│
-├── tests/
-│
-├── .env.example
-├── .gitignore
-├── CONTRIBUTING.md
-├── SECURITY.md
-├── gui_qt.py
-├── pyproject.toml
-└── README.md
-```
+Tools are treated as **explicit capabilities**, not arbitrary functions exposed to the language model.
 
-The authoritative v2 implementation lives under:
-
-```text
-src/controlled_agent/
-```
-
-The original demonstration implementation remains available through Git history under:
-
-```text
-v1.0-demo
-```
+The agent should only know about the minimum set of actions required for its task.
 
 ---
 
-# Installation
+## `lookup_order`
 
-## Requirements
+### Purpose
+
+Retrieve information about an existing customer order.
+
+### Classification
+
+**Read-only**
+
+### Typical use
 
 ```text
-Python >= 3.10
-Python < 3.13
+User:
+"Where is order ORD-1042?"
+
+        ↓
+
+Agent proposes:
+
+lookup_order(
+    order_id="ORD-1042"
+)
 ```
 
-Clone the repository:
-
-```bash
-git clone https://github.com/mahmmooudian/controlled-order-agent.git
-cd controlled-order-agent
-```
+Because the operation is read-only, it can be executed through the controlled runtime after validation.
 
 ---
 
-## Core Installation
+## `create_ticket`
 
-```bash
-python -m pip install -e .
+### Purpose
+
+Create a support ticket when an issue requires escalation or human follow-up.
+
+### Classification
+
+**State-changing / consequential**
+
+### Typical use
+
+```text
+User:
+"My order arrived damaged. Please escalate this."
+
+        ↓
+
+Agent proposes:
+
+create_ticket(...)
 ```
+
+Unlike a read-only lookup, ticket creation changes external system state.
+
+The proposed action therefore passes through the approval boundary before execution.
 
 ---
 
-## Development Installation
+## Read vs. Write Separation
 
-```bash
-python -m pip install -e ".[dev]"
+```mermaid
+flowchart TD
+    A[Tool Request] --> B{Tool Classification}
+
+    B -- Read Only --> C[Validate]
+    C --> D[Execute]
+
+    B -- State Changing --> E[Request Human Approval]
+    E --> F{Decision}
+
+    F -- Approve --> C
+    F -- Reject --> G[Stop Action]
 ```
+
+This distinction is one of the most important safety boundaries in the system.
 
 ---
 
-## GUI Installation
+# Human-in-the-Loop Approval
 
-```bash
-python -m pip install -e ".[gui]"
+The agent is allowed to **propose** consequential actions.
+
+It is not allowed to approve those actions itself.
+
+The approval workflow follows:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Proposed
+
+    Proposed --> UnderReview
+    UnderReview --> Approved
+    UnderReview --> Rejected
+
+    Approved --> Executing
+    Executing --> Completed
+
+    Rejected --> Cancelled
+
+    Completed --> [*]
+    Cancelled --> [*]
 ```
+
+The reviewer should be able to inspect:
+
+- Proposed tool
+- Tool arguments
+- User request
+- Expected action
+- Relevant context
+- Potential side effect
+
+before approving execution.
 
 ---
 
-## Optional OpenAI Planner
+## Why Approval Happens Outside the Model
 
-```bash
-python -m pip install -e ".[llm]"
+The language model must not be able to generate:
+
+```text
+"I approve this action."
 ```
+
+and thereby authorize itself.
+
+Approval is an application-level control.
+
+Conceptually:
+
+```text
+LLM Authority:
+    propose()
+
+Runtime Authority:
+    validate()
+    authorize()
+    execute()
+
+Human Authority:
+    approve()
+    reject()
+```
+
+This ensures that reasoning authority and execution authority remain separate.
 
 ---
 
-## Full Development Environment
+# Reliability Controls
 
-```bash
-python -m pip install -e ".[dev,gui,llm]"
-```
+Agent systems interact with models, APIs, tools, and users.
 
----
+All of these components can fail.
 
-# Configuration
-
-Create a local environment file from the provided example.
-
-PowerShell:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Important configuration options include:
-
-```dotenv
-CONTROLLED_AGENT_ENV=development
-CONTROLLED_AGENT_DEBUG=false
-CONTROLLED_AGENT_LOG_LEVEL=INFO
-
-CONTROLLED_AGENT_DB=data/controlled_agent.db
-CONTROLLED_AGENT_API_URL=http://127.0.0.1:8000
-
-CONTROLLED_AGENT_API_KEY=
-CONTROLLED_AGENT_READER_API_KEY=
-CONTROLLED_AGENT_OPERATOR_API_KEY=
-CONTROLLED_AGENT_APPROVER_API_KEY=
-
-CONTROLLED_AGENT_ALLOW_SECURITY_SIMULATION=false
-
-OPENAI_API_KEY=
-OPENAI_MODEL=
-```
-
-Real secrets must never be committed.
-
-`OPENAI_API_KEY` and `OPENAI_MODEL` are required only when explicitly using the optional `LLMPlanner`.
+Controlled Order Agent therefore treats reliability as part of the agent architecture rather than an afterthought.
 
 ---
 
-# Running the API
+## Idempotency
 
-Start the FastAPI service with:
+State-changing operations must be protected from accidental duplicate execution.
 
-```bash
-uvicorn controlled_agent.api.app:app --reload
-```
-
-Default local address:
+A typical failure scenario is:
 
 ```text
-http://127.0.0.1:8000
+create_ticket()
+      ↓
+Ticket Created
+      ↓
+Network Timeout
+      ↓
+Agent Retries
+      ↓
+create_ticket()
 ```
 
-Interactive API documentation:
+Without idempotency, this could create two support tickets.
+
+The desired behavior is:
 
 ```text
-http://127.0.0.1:8000/docs
+Request + Idempotency Key
+          ↓
+Already Executed?
+      ┌───┴───┐
+     Yes      No
+      │        │
+Cached Result Execute
+      │        │
+      └───┬────┘
+          ↓
+       Result
 ```
+
+The same logical operation should not create duplicate side effects when retried.
 
 ---
 
-# API Endpoints
+## Timeout Handling
 
-Primary endpoints include:
+External tools may become slow or unavailable.
 
-```text
-GET  /health
-GET  /ready
+Tool execution should therefore have explicit time limits.
 
-POST /agent/runs
-GET  /agent/runs/{run_id}
-POST /agent/runs/{run_id}/input
-POST /agent/runs/{run_id}/approval
-GET  /agent/runs/{run_id}/audit
+```mermaid
+flowchart LR
+    A[Tool Call] --> B{Completed Before Timeout?}
+
+    B -- Yes --> C[Return Result]
+    B -- No --> D[Timeout Error]
+
+    D --> E[Retry Policy]
+    E --> F{Retry Budget Available?}
+
+    F -- Yes --> A
+    F -- No --> G[Fail Safely]
 ```
 
-`/health` and `/ready` are operational endpoints.
-
-Sensitive `/agent/...` operations are protected according to configured authentication and RBAC behavior.
+A tool should never be allowed to block agent execution indefinitely.
 
 ---
 
-# Running the Desktop GUI
+## Bounded Retries
 
-Install GUI dependencies:
+Retries should be:
 
-```bash
-python -m pip install -e ".[gui]"
-```
+- Limited
+- Explicit
+- Observable
+- Applied only where safe
 
-Start the API first:
+Read operations are generally easier to retry.
 
-```bash
-uvicorn controlled_agent.api.app:app
-```
-
-Then launch:
-
-```bash
-python gui_qt.py
-```
-
-The desktop interface communicates with the FastAPI backend rather than bypassing the API security model.
+State-changing operations require idempotency protection before retrying.
 
 ---
 
-# Example Workflow
+## Failure Handling
 
-A typical delayed-order workflow looks like:
+Failures should return structured outcomes rather than raw stack traces to the agent.
 
-```text
-User asks about order 8452
-        |
-        v
-Agent validates order ID
-        |
-        v
-lookup_order
-        |
-        v
-Order delayed by 5 days
-        |
-        v
-Policy identifies ticket eligibility
-        |
-        v
-WAITING_FOR_APPROVAL
-        |
-        v
-Human approves
-        |
-        v
-Approval context verified
-        |
-        v
-Approval consumed
-        |
-        v
-create_ticket
-        |
-        v
-DONE
-```
-
-If approval is denied:
+Conceptually:
 
 ```text
-No ticket is created.
+Tool Failure
+    ↓
+Classify Error
+    ↓
+Retryable?
+   /    \
+ Yes    No
+  │      │
+Retry   Fail Safely
+  │      │
+  └──┬───┘
+     ↓
+Structured Observation
+     ↓
+Agent Response
 ```
 
-If approval is missing:
-
-```text
-WRITE remains blocked.
-```
-
-If approval was already consumed:
-
-```text
-Replay attempt is rejected.
-```
+This allows the model to reason about failures without receiving unnecessary implementation details.
 
 ---
 
-# Security Model
+# Security & Control Principles
 
-The project uses defense in depth.
+## Least Privilege
 
-Core invariants include:
+The agent receives only the tools required for its task.
+
+It should not receive broad application, database, or administrative access simply because that access is available.
 
 ```text
-Planner decision != authorization
-
-Sensitive WRITE requires policy authorization
-
-Sensitive WRITE requires human approval
-
-Approval must match the execution context
-
-Approval is one-time use
-
-Tool output is untrusted
-
-API access follows least privilege
-
-Execution is bounded
-
-Security-sensitive uncertainty fails closed
+Agent
+ ├── lookup_order    ✓
+ ├── create_ticket   ✓ controlled
+ ├── delete_orders   ✗
+ ├── admin_database  ✗
+ └── arbitrary_shell ✗
 ```
 
-More detail:
-
-- [`docs/security.md`](docs/security.md)
-- [`SECURITY.md`](SECURITY.md)
+Capability exposure is intentionally narrow.
 
 ---
 
-# Deterministic Evaluation
+## Explicit Tool Allowlist
 
-The repository includes a production-style deterministic evaluation framework.
+Only registered tools can be requested.
 
-Run:
-
-```bash
-python -m evals.run_evals
-```
-
-Current validated result:
-
-```text
-Total Cases: 10
-Passed Scenarios: 10
-
-Scenario Pass Rate: 100.00%
-Tool Selection Accuracy: 100.00%
-
-Unwanted Actions: 0
-Unwanted Action Rate: 0.00%
-
-Approval Enforcement Rate: 100.00%
-Unsafe Write Block Rate: 100.00%
-Approval Replay Block Rate: 100.00%
-
-Overall Evaluation: PASS
-```
-
-The evaluation uses:
-
-```text
-RuleBasedPlanner
-```
-
-to preserve deterministic and reproducible results.
+Unknown or unauthorized tool names should be rejected before execution.
 
 ---
 
-# Evaluation Scenarios
+## Deterministic Policy Boundary
 
-The current suite includes:
+Security-critical decisions should be implemented in application logic rather than delegated entirely to prompt instructions.
+
+The model may reason about whether an action is appropriate.
+
+The runtime determines whether the action is actually permitted.
+
+---
+
+## Parameter Validation
+
+Tool arguments should be validated before execution.
+
+Examples include:
+
+- Required fields
+- Identifier format
+- Allowed value ranges
+- Supported action types
+- Missing parameters
+
+Invalid actions should fail before reaching the underlying tool.
+
+---
+
+## Controlled Side Effects
+
+Consequential actions should have stronger controls than read-only actions.
+
+This can include:
+
+- Human approval
+- Idempotency keys
+- Rate limits
+- Explicit policy checks
+- Additional logging
+
+---
+
+# Auditability
+
+Every significant agent action should leave an observable trace.
+
+A useful execution record can include:
 
 ```text
-1. delayed_order_approved
-
-2. delayed_order_denied
-
-3. delayed_order_waiting_for_approval
-
-4. small_delay
-
-5. no_delay
-
-6. order_not_found
-
-7. missing_order_id
-
-8. invalid_order_id
-
-9. tool_output_injection
-
-10. transient_timeout_recovers_after_retry
-```
-
-Dedicated security probes additionally validate:
-
-```text
-unsafe WRITE blocking
-
-approval replay prevention
+Timestamp
+Session / Request ID
+User Request
+Agent Decision
+Tool Name
+Tool Arguments
+Policy Decision
+Approval Decision
+Execution Result
+Latency
+Error / Retry Information
 ```
 
 ---
 
-# Machine-Readable Evaluation
+## Audit Flow
 
-JSON output:
+```mermaid
+flowchart LR
+    A[Agent Decision] --> E[Audit Trail]
+    B[Policy Check] --> E
+    C[Human Approval] --> E
+    D[Tool Execution] --> E
 
-```bash
-python -m evals.run_evals --json
+    E --> F[Debugging]
+    E --> G[Review]
+    E --> H[Operational Analysis]
 ```
 
-Write a JSON report:
+Auditability helps answer:
 
-```bash
-python -m evals.run_evals --json-output evaluation-report.json
-```
+> What did the agent attempt to do?
 
-Evaluation returns a non-zero process exit code when a required gate fails.
+> Why was the action allowed?
 
-This makes the evaluator suitable for CI enforcement.
+> Who approved it?
 
-See:
+> What tool actually executed?
 
-- [`docs/evaluation.md`](docs/evaluation.md)
+> What happened afterward?
 
 ---
 
-# Automated Tests
+# Example Workflows
 
-Run the complete installed test suite:
+## Order Lookup
 
-```bash
-pytest -q
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant P as Policy Layer
+    participant T as lookup_order
+
+    U->>A: Where is ORD-1042?
+    A->>P: Propose lookup_order
+    P->>P: Validate read-only action
+    P->>T: Execute
+    T-->>P: Order status
+    P-->>A: Structured result
+    A-->>U: Order update
 ```
 
-Current locally validated full regression baseline with optional LLM dependencies installed:
-
-```text
-205 passed
-```
+No approval is required because the action is read-only.
 
 ---
 
-## Optional LLMPlanner Tests
+## Ticket Creation
 
-Run:
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent
+    participant P as Policy Layer
+    participant H as Human Reviewer
+    participant T as create_ticket
 
-```bash
-pytest tests/unit/test_llm_planner.py -q
+    U->>A: Please escalate this issue
+    A->>P: Propose create_ticket
+    P->>H: Request approval
+    H-->>P: Approve
+    P->>T: Execute controlled action
+    T-->>P: Ticket result
+    P-->>A: Structured result
+    A-->>U: Confirmation
 ```
 
-Current validated result:
-
-```text
-6 passed
-```
-
-These tests use mocks.
-
-They do **not** make real OpenAI API requests.
-
-They validate behavior including:
-
-```text
-required OpenAI configuration
-
-client initialization
-
-safe-state projection
-
-structured AgentDecision parsing
-
-failure on missing structured output
-
-credential exclusion from model payload
-```
-
-A successful mocked test suite should not be interpreted as successful live OpenAI API execution.
+The language model proposes the action, but execution only occurs after approval.
 
 ---
 
-# Continuous Integration
+# Reliability Model
 
-GitHub Actions validates the project using separate jobs.
+The project demonstrates several principles required for dependable tool-using agents.
 
-```text
-Core Tests
-    |
-    +-- Python 3.10
-    +-- Python 3.11
-    +-- Python 3.12
-
-
-Optional LLM Tests
-    |
-    +-- OpenAI dependency installed
-    +-- mocked API behavior
-
-
-Production Evaluation
-    |
-    +-- deterministic RuleBasedPlanner
-    +-- security probes
-    +-- JSON evaluation report
-```
-
-CI workflow:
-
-```text
-.github/workflows/ci.yml
-```
-
-The workflow uses restricted repository permissions:
-
-```text
-contents: read
-```
-
-The deterministic evaluation does not require an OpenAI API key.
+| Concern | Control |
+|---|---|
+| Unrestricted actions | Explicit tool allowlist |
+| Invalid arguments | Parameter validation |
+| Sensitive write operations | Human approval |
+| Duplicate execution | Idempotency |
+| Hanging tool calls | Timeouts |
+| Temporary failures | Bounded retries |
+| Excessive permissions | Least privilege |
+| Hidden agent behavior | Audit logging |
+| Unsafe failures | Fail-safe execution |
 
 ---
 
-# Security Evaluation Philosophy
+## Engineering Principles
 
-Passing tests does not mean the project is secure against every possible attack.
+### Model Reasoning ≠ Execution Authority
 
-The documented metrics mean:
+The LLM decides what it would like to do.
 
-```text
-The included scenarios passed.
-```
-
-They do not mean:
-
-```text
-The project is formally verified.
-```
-
-or:
-
-```text
-The project cannot fail under unseen conditions.
-```
-
-or:
-
-```text
-The system is enterprise-hardened for every production environment.
-```
-
-The repository demonstrates tested application-level security architecture.
+The runtime decides what it is allowed to do.
 
 ---
 
-# Production Scope
+### Read and Write Actions Are Different
 
-The project is accurately described as:
-
-```text
-production-oriented
-
-security-focused
-
-production-style application architecture
-```
-
-It currently includes application-level controls such as:
-
-```text
-authentication
-
-RBAC
-
-policy enforcement
-
-human approval
-
-context-bound authorization
-
-approval replay prevention
-
-structured validation
-
-persistent audit
-
-safe retry behavior
-
-bounded autonomy
-
-CI evaluation
-```
-
-Infrastructure controls such as the following are outside the current repository scope:
-
-```text
-WAF
-
-DDoS protection
-
-cloud IAM
-
-centralized secret management
-
-SIEM
-
-production TLS termination
-
-distributed database
-
-distributed locks
-
-network segmentation
-
-enterprise identity provider
-```
+Information retrieval and state mutation have different risk profiles and therefore different control requirements.
 
 ---
 
-# Documentation
+### Fail Closed
 
-Detailed technical documentation is available in:
+When authorization is unclear or approval is unavailable, consequential execution should stop rather than proceed optimistically.
 
-### Architecture
+---
 
-[`docs/architecture.md`](docs/architecture.md)
+### Bounded Autonomy
 
-Covers:
+Autonomy is useful only when the permitted action space is clearly defined.
 
-```text
-system layers
-planner architecture
-runtime
-persistence
-approval flow
-API
-CI
-trust boundaries
-```
+---
 
-### Security
+### Human Oversight Where It Matters
 
-[`docs/security.md`](docs/security.md)
+Human approval should be concentrated around actions with meaningful side effects rather than applied blindly to every reasoning step.
 
-Covers:
+---
 
-```text
-threat model
-authentication
-RBAC
-approval security
-replay protection
-prompt-injection boundaries
-secret handling
-security evaluation
-```
+### Reliability Before Autonomy
+
+Retries, timeouts, idempotency, validation, and observability are part of agent design—not optional production polish.
+
+---
+
+# Technology Concepts
+
+| Area | Concepts |
+|---|---|
+| **AI Architecture** | Tool-Using Agent |
+| **Agent Control** | Bounded Autonomy |
+| **Tool Execution** | Structured Tool Calling |
+| **Human Oversight** | Human-in-the-Loop Approval |
+| **Reliability** | Timeout, Retry, Idempotency |
+| **Security** | Least Privilege, Tool Allowlisting |
+| **Observability** | Event / Audit Logging |
+| **Domain** | Order Support & Escalation |
+
+---
+
+## Use Cases
+
+The architecture can be adapted to other controlled agent workflows such as:
+
+- Customer-support escalation
+- IT support
+- Internal operations
+- Approval workflows
+- Administrative assistants
+- Enterprise automation
+- Compliance-sensitive tool use
+
+The specific order-support workflow serves as a compact demonstration of the broader controlled-agent pattern.
+
+---
+
+# Limitations
+
+Controlled Order Agent is a **technical demonstration of governed agent execution**, not a complete production customer-support platform.
+
+Current scope should not be interpreted as providing:
+
+- Enterprise identity management
+- Production authorization infrastructure
+- Distributed workflow persistence
+- Durable execution across process crashes
+- Real CRM / ERP integration unless separately configured
+- Production-grade secret management
+- Advanced policy engines
+- Distributed audit storage
+- Formal security certification
+
+The project demonstrates architectural controls and agent-engineering principles rather than claiming complete production infrastructure.
+
+---
+
+## Roadmap
+
+Potential future development includes:
+
+### Agent Governance
+
+- Policy-as-code configuration
+- Risk-based action classification
+- Dynamic approval policies
+- Role-based tool authorization
+- Multi-level approval workflows
+
+### Reliability
+
+- Durable workflow state
+- Exponential backoff
+- Dead-letter handling
+- Replayable execution
+- Circuit breakers
+- Failure injection tests
+
+### Observability
+
+- Structured JSON traces
+- Tool latency dashboards
+- Approval metrics
+- Retry metrics
+- Agent trajectory visualization
+- OpenTelemetry integration
+
+### Integrations
+
+- Real order-management APIs
+- CRM integration
+- Ticketing platforms
+- Authentication
+- Persistent state storage
 
 ### Evaluation
 
-[`docs/evaluation.md`](docs/evaluation.md)
-
-Covers:
-
-```text
-evaluation scenarios
-metrics
-security probes
-JSON reporting
-LLM test scope
-CI quality gates
-limitations
-```
+- Tool-selection accuracy
+- Argument-validity evaluation
+- Approval-policy compliance
+- Duplicate-action tests
+- Failure-recovery scenarios
+- Agent reliability benchmark suite
 
 ---
 
-# Development Philosophy
+## Project Status
 
-The project follows several design principles:
+**Controlled Agent Demonstrator**
 
-```text
-Explicit authority over implicit trust
+The project focuses on the engineering boundary between:
 
-Structured data over free-form control
+**LLM Reasoning**
 
-Least privilege over broad capability
+and
 
-Fail closed over unsafe continuation
+**Authorized Real-World Execution**
 
-Human approval for privileged actions
+with emphasis on:
 
-Deterministic regression for security-critical behavior
-
-Auditability without exposing hidden reasoning
-```
-
----
-
-# Contributing
-
-Contributions are welcome when they preserve the project's control boundaries.
-
-Before submitting changes:
-
-```bash
-pytest -q
-python -m evals.run_evals
-git diff --check
-```
-
-Security-sensitive changes should include regression coverage.
-
-See:
-
-[`CONTRIBUTING.md`](CONTRIBUTING.md)
-
----
-
-# Security Reporting
-
-Do not publish real credentials, sensitive database contents, or detailed working exploits in public issues.
-
-See:
-
-[`SECURITY.md`](SECURITY.md)
-
-for vulnerability reporting guidance.
-
----
-
-# Version History
-
-## v2.0.0
-
-Current production-oriented release.
-
-Highlights:
-
-```text
-FastAPI architecture
-
-SQLite persistence
-
-RBAC
-
-Bearer authentication
-
-Human approval
-
-Context-bound authorization
-
-Approval replay protection
-
-Persistent audit logging
-
-Safe HTTP behavior
-
-Security-focused evaluation
-
-Optional OpenAI LLMPlanner
-
-GitHub Actions CI
-
-205-test full regression baseline
-
-10 / 10 deterministic evaluation scenarios
-```
-
-Release:
-
-[Controlled Order Agent v2.0.0](https://github.com/mahmmooudian/controlled-order-agent/releases/tag/v2.0.0)
-
----
-
-## v1.0-demo
-
-Original role-play / demonstration implementation.
-
-Preserved in Git history under:
-
-```text
-v1.0-demo
-```
-
-The v1 tag is retained for historical and educational comparison.
-
----
-
-# Future Work
-
-Potential extensions include:
-
-```text
-runtime-configurable planner selection
-
-dedicated live LLM evaluation
-
-additional LLM providers
-
-PostgreSQL persistence
-
-external order-management integration
-
-external ticketing integration
-
-OAuth / OIDC
-
-rate limiting
-
-OpenTelemetry
-
-Prometheus metrics
-
-centralized security telemetry
-
-cloud secret management
-
-distributed approval coordination
-```
-
-Any future planner or integration should preserve:
-
-```text
-Planner
-   |
-   v
-Runtime
-   |
-   v
-Policy
-   |
-   v
-Validation
-   |
-   v
-Human Approval
-   |
-   v
-Authorization
-   |
-   v
-Tool Execution
-```
-
----
-
-# Disclaimer
-
-This repository is a reference implementation for controlled agent architecture.
-
-It is not a claim of formal verification, universal security, or complete enterprise production hardening.
-
-Real deployments should perform their own:
-
-```text
-threat modeling
-
-security review
-
-infrastructure hardening
-
-identity design
-
-secret management
-
-monitoring
-
-load testing
-
-compliance assessment
-```
+- Tool calling
+- Controlled actions
+- Human approval
+- Idempotency
+- Failure handling
+- Least privilege
+- Auditability
 
 ---
 
@@ -1309,8 +842,25 @@ compliance assessment
 
 **Amir Mohammad Mahmoudian**
 
-GitHub: [@mahmmooudian](https://github.com/mahmmooudian)
+AI Engineer focused on **agentic AI, applied AI systems, LLM applications, machine learning, and reliable AI engineering**.
+
+[GitHub](https://github.com/mahmmooudian) ·
+[LinkedIn](https://www.linkedin.com/in/amirmohmmadmahmoudian)
 
 ---
 
-> **Build capable agents without making capability equivalent to authority.**
+## License
+
+See the repository license for usage and distribution terms.
+
+---
+
+<div align="center">
+
+### Reason → Propose → Authorize → Execute → Verify → Record
+
+**Building AI agents that can act without giving up control.**
+
+If this repository is useful to your work or research, consider giving it a ⭐.
+
+</div>
